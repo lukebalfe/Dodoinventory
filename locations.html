@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dodo Coffee Inventory — Locations</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div id="login-screen" class="login-screen">
+  <form id="login-form" class="login-box">
+    <h1>🦤 Dodo Coffee Inventory</h1>
+    <p class="login-sub">Sign in with your team account</p>
+    <input type="email" id="login-email" placeholder="Email" required autocomplete="username">
+    <input type="password" id="login-password" placeholder="Password" required autocomplete="current-password">
+    <button type="submit">Sign in</button>
+    <div id="login-error" class="form-error"></div>
+  </form>
+</div>
+
+<div id="app" style="display:none;">
+
+  <nav class="topnav">
+    <div class="nav-brand">🦤 Dodo Coffee</div>
+    <div class="nav-links">
+      <a href="index.html">Dashboard</a>
+      <a href="items.html">Items</a>
+      <a href="vendors.html">Vendors</a>
+      <a href="locations.html">Locations</a>
+      <a href="transfer-orders.html">Transfer Orders</a>
+      <a href="purchase-orders.html">Purchase Orders</a>
+    </div>
+    <button id="signout-btn" class="signout-btn">Sign out</button>
+  </nav>
+
+  <div class="page">
+    <div class="page-header">
+      <div>
+        <h1>Locations</h1>
+        <p>Where your stock lives</p>
+      </div>
+    </div>
+
+    <div class="placeholder-state">
+      <h2>📍 Coming soon</h2>
+      <div>Adding locations, assigning items, and setting per-location reorder points are coming in a follow-up round.</div>
+    </div>
+  </div>
+
+</div>
+
+<script src="app.js"></script>
+<script>
+  initAuthGate(function() {});
+</script>
+
+</body>
+</html>
