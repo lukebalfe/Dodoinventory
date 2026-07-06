@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dodo Coffee Inventory — Items</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div id="login-screen" class="login-screen">
+  <form id="login-form" class="login-box">
+    <img src="assets/dodo-full-logo.png" alt="Dodo Coffee Co" class="login-logo">
+    <p class="login-sub" style="margin-top:-4px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; font-size:11px;">Inventory</p>
+    <p class="login-sub">Sign in with your team account</p>
+    <input type="email" id="login-email" placeholder="Email" required autocomplete="username">
+    <input type="password" id="login-password" placeholder="Password" required autocomplete="current-password">
+    <button type="submit">Sign in</button>
+    <div id="login-error" class="form-error"></div>
+  </form>
+</div>
+
+<div id="app" style="display:none;">
+
+  <nav class="topnav">
+    <div class="nav-brand"><img src="assets/dodo-bird.png" alt="" class="nav-logo"> Dodo Coffee</div>
+    <div class="nav-links">
+      <a href="index.html">Dashboard</a>
+      <a href="items.html">Items</a>
+      <a href="vendors.html">Vendors</a>
+      <a href="locations.html">Locations</a>
+      <a href="transfer-orders.html">Transfer Orders</a>
+      <a href="purchase-orders.html">Purchase Orders</a>
+    </div>
+    <button id="signout-btn" class="signout-btn">Sign out</button>
+  </nav>
+
+  <div class="page">
+    <div class="page-header">
+      <div>
+        <h1>Items</h1>
+        <p>Every item, alphabetically</p>
+      </div>
+      <button class="btn-primary admin-only" style="display:none;" onclick="openAddModal()">+ Add item</button>
+    </div>
+
+    <div class="controls">
+      <input type="text" id="search" placeholder="Search by name or SKU...">
+      <select id="category-filter">
+        <option value="">All categories</option>
+      </select>
+    </div>
+
+    <div id="status-line" class="status-line">Loading items…</div>
+    <div class="items-list" id="items-list"></div>
+  </div>
+
+</div>
+
+<!-- Add/Edit item modal -->
+<div id="modal-overlay" class="modal-overlay" style="display:none;">
+  <div class="modal-box">
+    <h2 id="modal-title">Edit item</h2>
+    <form id="item-form">
+      <input type="hidden" id="f-mode" value="add">
+      <input type="hidden" id="f-product-id" value="">
+      <input type="hidden" id="f-item-id" value="">
+
+      <label>Item name</label>
+      <input type="text" id="f-name" required placeholder="e.g. Hot Cup">
+
+      <label>Category</label>
+      <input type="text" id="f-category" list="category-options" placeholder="e.g. Cups, Lids, Straws">
+      <datalist id="category-options"></datalist>
+
+      <label>Vendor</label>
+      <input type="text" id="f-vendor" list="vendor-options" placeholder="e.g. Yamipak">
+      <datalist id="vendor-options"></datalist>
+
+      <div class="field-row">
+        <div>
+          <label>Variant (size/flavor)</label>
+          <input type="text" id="f-variant" placeholder="e.g. 12oz">
+        </div>
+        <div>
+          <label>SKU</label>
+          <input type="text" id="f-sku">
+        </div>
+      </div>
+
+      <div class="field-row">
+        <div>
+          <label>Cost of goods sold</label>
+          <input type="number" step="0.01" id="f-purchase-price">
+        </div>
+        <div>
+          <label>Selling price</label>
+          <input type="number" step="0.01" id="f-selling-price">
+        </div>
+      </div>
+
+      <div class="field-row">
+        <div>
+          <label>Stock on hand</label>
+          <input type="number" id="f-stock">
+        </div>
+        <div>
+          <label>Reorder level</label>
+          <input type="number" id="f-reorder">
+        </div>
+      </div>
+
+      <label>Photo</label>
+      <input type="file" id="f-image" accept="image/*">
+      <img id="f-image-preview" class="item-thumb-preview" style="display:none;">
+
+      <div id="modal-error" class="form-error"></div>
+
+      <div class="modal-actions">
+        <div>
+          <button type="button" id="delete-item-btn" class="btn-danger" style="display:none;" onclick="deleteCurrentItem()">Delete item</button>
+        </div>
+        <div class="right-actions">
+          <button type="button" class="btn-secondary" onclick="closeModal()">Cancel</button>
+          <button type="submit" class="btn-primary">Save</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+  let allProducts = [];
+
+  function buildFlatItemList() {
+    // Flatten products -> one entry per item (variant), each carrying its parent product info
+    const flat = [];
+    allProducts.forEach(product => {
+      (product.items || []).forEach(item => {
+        flat.push({ product, item });
+      });
+    });
+    return flat.sort((a, b) => a.product.name.localeCompare(b.product.name));
+  }
+
+  function renderItemRow({ product, item }) {
+    const status = stockStatus(item);
+    const rowId = `row-${item.id}`;
+    const variant = variantLabel(item);
+    const displayName = variant && variant !== product.name ? `${product.name} — ${variant}` : product.name;
+
+    return `
+      <div class="item-row" id="${rowId}">
+        <div class="item-row-summary" onclick="toggleRow('${item.id}')">
+          <img class="item-thumb" src="${item.image_url || ''}" onerror="this.style.visibility='hidden'">
+          <div class="item-row-name">${displayName}</div>
+          <div class="item-row-sku">${item.sku || item.item_code || '—'}</div>
+          <div class="item-row-stock">${item.stock_on_hand ?? '—'}</div>
+          <span class="stamp ${status}">${stockLabel(status)}</span>
+          <div class="item-row-chevron">▸</div>
+        </div>
+        <div class="item-row-detail">
+          <div class="detail-grid">
+            <div class="detail-field"><span class="k">Category</span><span class="v">${product.categories?.name || '—'}</span></div>
+            <div class="detail-field"><span class="k">Vendor</span><span class="v">${product.vendors?.name || '—'}</span></div>
+            <div class="detail-field"><span class="k">Cost of goods sold</span><span class="v">${money(item.purchase_price)}</span></div>
+            <div class="detail-field"><span class="k">Selling price</span><span class="v">${money(item.selling_price)}</span></div>
+            <div class="detail-field"><span class="k">Reorder level</span><span class="v">${item.reorder_level ?? '—'}</span></div>
+            <div class="detail-field"><span class="k">Location</span><span class="v">${item.location_name || '—'}</span></div>
+          </div>
+          <button class="icon-btn admin-only" style="display:none;" onclick="openEditModal('${product.id}', '${item.id}'); event.stopPropagation();">Edit item</button>
+        </div>
+      </div>
+    `;
+  }
+
+  window.toggleRow = function(itemId) {
+    document.getElementById(`row-${itemId}`).classList.toggle('expanded');
+  };
+
+  function populateCategoryFilter() {
+    const cats = [...new Set(allProducts.map(p => p.categories?.name).filter(Boolean))].sort();
+    const select = document.getElementById('category-filter');
+    const current = select.value;
+    select.innerHTML = `<option value="">All categories</option>` + cats.map(c => `<option value="${c}">${c}</option>`).join('');
+    select.value = current;
+  }
+
+  function render() {
+    const search = document.getElementById('search').value.trim().toLowerCase();
+    const categoryFilter = document.getElementById('category-filter').value;
+
+    let flat = buildFlatItemList();
+
+    if (categoryFilter) {
+      flat = flat.filter(({ product }) => product.categories?.name === categoryFilter);
+    }
+    if (search) {
+      flat = flat.filter(({ product, item }) =>
+        (product.name + ' ' + (item.sku || '') + ' ' + (item.variant_name || '')).toLowerCase().includes(search)
+      );
+    }
+
+    const list = document.getElementById('items-list');
+    const statusLine = document.getElementById('status-line');
+
+    if (flat.length === 0) {
+      list.innerHTML = '';
+      statusLine.textContent = 'No items match.';
+      return;
+    }
+
+    statusLine.textContent = `${flat.length} item${flat.length === 1 ? '' : 's'}`;
+
+    // Group by first letter for the alphabetical section labels
+    let html = '';
+    let lastLetter = '';
+    flat.forEach(entry => {
+      const letter = entry.product.name[0].toUpperCase();
+      if (letter !== lastLetter) {
+        html += `<div class="item-group-label">${letter}</div>`;
+        lastLetter = letter;
+      }
+      html += renderItemRow(entry);
+    });
+    list.innerHTML = html;
+
+    document.querySelectorAll('.admin-only').forEach(el => {
+      el.style.display = isAdmin ? '' : 'none';
+    });
+  }
+
+  document.getElementById('search').addEventListener('input', render);
+  document.getElementById('category-filter').addEventListener('change', render);
+
+  async function loadItems() {
+    const { data, error } = await supabaseClient
+      .from('products')
+      .select(`
+        id, name, product_code, description,
+        categories ( name ),
+        vendors ( name ),
+        items ( id, item_code, variant_name, sku, purchase_price, selling_price,
+                stock_on_hand, reorder_level, location_name, image_url,
+                attribute1_value, attribute2_value, attribute3_value )
+      `)
+      .order('name');
+
+    if (error) {
+      document.getElementById('status-line').textContent = '';
+      document.getElementById('items-list').innerHTML = `
+        <div class="error-state"><h2>Couldn't load items</h2><div>${error.message}</div></div>`;
+      return;
+    }
+
+    allProducts = data;
+    populateCategoryFilter();
+    render();
+  }
+
+  // ---- Add/Edit modal ----
+  const modalOverlay = document.getElementById('modal-overlay');
+  const itemForm = document.getElementById('item-form');
+  let selectedImageFile = null;
+
+  function populateDatalists() {
+    const cats = [...new Set(allProducts.map(p => p.categories?.name).filter(Boolean))];
+    const vends = [...new Set(allProducts.map(p => p.vendors?.name).filter(Boolean))];
+    document.getElementById('category-options').innerHTML = cats.map(c => `<option value="${c}">`).join('');
+    document.getElementById('vendor-options').innerHTML = vends.map(v => `<option value="${v}">`).join('');
+  }
+
+  function resetImagePicker() {
+    selectedImageFile = null;
+    document.getElementById('f-image').value = '';
+    document.getElementById('f-image-preview').style.display = 'none';
+  }
+
+  document.getElementById('f-image').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    selectedImageFile = file;
+    const preview = document.getElementById('f-image-preview');
+    preview.src = URL.createObjectURL(file);
+    preview.style.display = 'block';
+  });
+
+  window.openAddModal = function() {
+    itemForm.reset();
+    resetImagePicker();
+    document.getElementById('f-mode').value = 'add';
+    document.getElementById('f-product-id').value = '';
+    document.getElementById('f-item-id').value = '';
+    document.getElementById('modal-title').textContent = 'Add item';
+    document.getElementById('modal-error').textContent = '';
+    document.getElementById('delete-item-btn').style.display = 'none';
+    populateDatalists();
+    modalOverlay.style.display = 'flex';
+  };
+
+  window.openEditModal = function(productId, itemId) {
+    const product = allProducts.find(p => p.id === productId);
+    const item = (product.items || []).find(i => i.id === itemId);
+
+    itemForm.reset();
+    resetImagePicker();
+    document.getElementById('f-mode').value = 'edit';
+    document.getElementById('f-product-id').value = product.id;
+    document.getElementById('f-item-id').value = item.id;
+    document.getElementById('modal-title').textContent = 'Edit ' + product.name;
+    document.getElementById('modal-error').textContent = '';
+    document.getElementById('delete-item-btn').style.display = '';
+
+    document.getElementById('f-name').value = product.name || '';
+    document.getElementById('f-category').value = product.categories?.name || '';
+    document.getElementById('f-vendor').value = product.vendors?.name || '';
+    document.getElementById('f-variant').value = item.attribute1_value || item.variant_name || '';
+    document.getElementById('f-sku').value = item.sku || '';
+    document.getElementById('f-purchase-price').value = item.purchase_price ?? '';
+    document.getElementById('f-selling-price').value = item.selling_price ?? '';
+    document.getElementById('f-stock').value = item.stock_on_hand ?? '';
+    document.getElementById('f-reorder').value = item.reorder_level ?? '';
+
+    if (item.image_url) {
+      const preview = document.getElementById('f-image-preview');
+      preview.src = item.image_url;
+      preview.style.display = 'block';
+    }
+
+    populateDatalists();
+    modalOverlay.style.display = 'flex';
+  };
+
+  window.closeModal = function() {
+    modalOverlay.style.display = 'none';
+  };
+
+  async function uploadImageIfNeeded(itemId) {
+    if (!selectedImageFile) return undefined; // no change
+    const ext = selectedImageFile.name.split('.').pop();
+    const path = `${itemId}-${Date.now()}.${ext}`;
+    const { error } = await supabaseClient.storage.from('item-images').upload(path, selectedImageFile, { upsert: true });
+    if (error) throw error;
+    const { data } = supabaseClient.storage.from('item-images').getPublicUrl(path);
+    return data.publicUrl;
+  }
+
+  window.deleteCurrentItem = async function() {
+    const itemId = document.getElementById('f-item-id').value;
+    if (!itemId) return;
+    if (!confirm('Delete this item? This can\'t be undone.')) return;
+
+    const { error } = await supabaseClient.from('items').delete().eq('id', itemId);
+    if (error) {
+      document.getElementById('modal-error').textContent = error.message;
+      return;
+    }
+    closeModal();
+    loadItems();
+  };
+
+  itemForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errorEl = document.getElementById('modal-error');
+    errorEl.textContent = '';
+
+    const mode = document.getElementById('f-mode').value;
+    const name = document.getElementById('f-name').value.trim();
+    const categoryName = document.getElementById('f-category').value.trim();
+    const vendorName = document.getElementById('f-vendor').value.trim();
+    const variant = document.getElementById('f-variant').value.trim();
+    const sku = document.getElementById('f-sku').value.trim() || null;
+    const purchasePrice = document.getElementById('f-purchase-price').value;
+    const sellingPrice = document.getElementById('f-selling-price').value;
+    const stock = document.getElementById('f-stock').value;
+    const reorder = document.getElementById('f-reorder').value;
+
+    try {
+      const categoryId = await getOrCreateByName('categories', categoryName);
+      const vendorId = await getOrCreateByName('vendors', vendorName);
+      let productId = document.getElementById('f-product-id').value || null;
+      let itemId = document.getElementById('f-item-id').value || null;
+
+      if (mode === 'add') {
+        const { data: existingProduct } = await supabaseClient
+          .from('products').select('id').eq('name', name).maybeSingle();
+
+        if (existingProduct) {
+          productId = existingProduct.id;
+          await supabaseClient.from('products').update({ category_id: categoryId, vendor_id: vendorId }).eq('id', productId);
+        } else {
+          const { data: newProduct, error: prodErr } = await supabaseClient
+            .from('products')
+            .insert({ name, category_id: categoryId, vendor_id: vendorId, product_code: slugify(name) })
+            .select('id').single();
+          if (prodErr) throw prodErr;
+          productId = newProduct.id;
+        }
+
+        const { data: newItem, error: itemErr } = await supabaseClient.from('items').insert({
+          product_id: productId,
+          variant_name: variant || name,
+          sku,
+          purchase_price: purchasePrice === '' ? null : Number(purchasePrice),
+          selling_price: sellingPrice === '' ? null : Number(sellingPrice),
+          stock_on_hand: stock === '' ? null : Number(stock),
+          reorder_level: reorder === '' ? null : Number(reorder),
+          attribute1_name: variant ? 'Variant' : null,
+          attribute1_value: variant || null,
+          item_code: sku || (slugify(variant || name) + '-' + Date.now().toString().slice(-5))
+        }).select('id').single();
+        if (itemErr) throw itemErr;
+        itemId = newItem.id;
+
+      } else {
+        await supabaseClient.from('products').update({
+          name, category_id: categoryId, vendor_id: vendorId
+        }).eq('id', productId);
+
+        const { error: itemErr } = await supabaseClient.from('items').update({
+          variant_name: variant || name,
+          sku,
+          purchase_price: purchasePrice === '' ? null : Number(purchasePrice),
+          selling_price: sellingPrice === '' ? null : Number(sellingPrice),
+          stock_on_hand: stock === '' ? null : Number(stock),
+          reorder_level: reorder === '' ? null : Number(reorder),
+          attribute1_name: variant ? 'Variant' : null,
+          attribute1_value: variant || null
+        }).eq('id', itemId);
+        if (itemErr) throw itemErr;
+      }
+
+      const imageUrl = await uploadImageIfNeeded(itemId);
+      if (imageUrl !== undefined) {
+        await supabaseClient.from('items').update({ image_url: imageUrl }).eq('id', itemId);
+      }
+
+      closeModal();
+      loadItems();
+
+    } catch (err) {
+      errorEl.textContent = err.message || 'Something went wrong saving this.';
+    }
+  });
+
+  initAuthGate(loadItems);
+</script>
+
+</body>
+</html>
