@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dodo Coffee Inventory — Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div id="login-screen" class="login-screen">
+  <form id="login-form" class="login-box">
+    <img src="assets/dodo-full-logo.png" alt="Dodo Coffee Co" class="login-logo">
+    <p class="login-sub" style="margin-top:-4px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; font-size:11px;">Inventory</p>
+    <p class="login-sub">Sign in with your team account</p>
+    <input type="email" id="login-email" placeholder="Email" required autocomplete="username">
+    <input type="password" id="login-password" placeholder="Password" required autocomplete="current-password">
+    <button type="submit">Sign in</button>
+    <div id="login-error" class="form-error"></div>
+  </form>
+</div>
+
+<div id="app" style="display:none;">
+
+  <nav class="topnav">
+    <div class="nav-brand"><img src="assets/dodo-bird.png" alt="" class="nav-logo"> Dodo Coffee</div>
+    <div class="nav-links">
+      <a href="index.html">Dashboard</a>
+      <a href="items.html">Items</a>
+      <a href="vendors.html">Vendors</a>
+      <a href="locations.html">Locations</a>
+      <a href="transfer-orders.html">Transfer Orders</a>
+      <a href="purchase-orders.html">Purchase Orders</a>
+    </div>
+    <button id="signout-btn" class="signout-btn">Sign out</button>
+  </nav>
+
+  <div class="page">
+    <div class="page-header">
+      <div>
+        <h1>Dashboard</h1>
+        <p>A quick look at your inventory</p>
+      </div>
+    </div>
+
+    <div id="stat-grid" class="stat-grid"></div>
+
+    <div class="dash-actions">
+      <a href="items.html" class="dash-action">
+        <div class="icon-wrap"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg></div>
+        <h3>View items</h3>
+        <p>Browse and manage all products &amp; stock</p>
+      </a>
+      <a href="vendors.html" class="dash-action">
+        <div class="icon-wrap"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+        <h3>Vendors</h3>
+        <p>See suppliers and contact info</p>
+      </a>
+      <a href="locations.html" class="dash-action">
+        <div class="icon-wrap"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 6-9 12-9 12s-9-6-9-12a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></div>
+        <h3>Locations</h3>
+        <p>Manage where stock is kept</p>
+      </a>
+      <a href="purchase-orders.html" class="dash-action">
+        <div class="icon-wrap"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>
+        <h3>Purchase orders</h3>
+        <p>Coming soon</p>
+      </a>
+    </div>
+  </div>
+
+</div>
+
+<script src="app.js"></script>
+<script>
+  async function onAppReady() {
+    const statGrid = document.getElementById('stat-grid');
+    statGrid.innerHTML = `<div class="status-line">Loading…</div>`;
+
+    const { data: products, error } = await supabaseClient
+      .from('products')
+      .select(`id, items ( stock_on_hand, reorder_level )`);
+
+    if (error) {
+      statGrid.innerHTML = `<div class="error-state"><h2>Couldn't load dashboard</h2><div>${error.message}</div></div>`;
+      return;
+    }
+
+    let totalItems = 0, lowCount = 0, outCount = 0;
+    products.forEach(p => {
+      (p.items || []).forEach(item => {
+        totalItems++;
+        const status = stockStatus(item);
+        if (status === 'low') lowCount++;
+        if (status === 'out') outCount++;
+      });
+    });
+
+    statGrid.innerHTML = `
+      <div class="stat-card">
+        <div class="stat-value">${products.length}</div>
+        <div class="stat-label">Products</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${totalItems}</div>
+        <div class="stat-label">Variants tracked</div>
+      </div>
+      <div class="stat-card warn">
+        <div class="stat-value">${lowCount}</div>
+        <div class="stat-label">Low stock</div>
+      </div>
+      <div class="stat-card danger">
+        <div class="stat-value">${outCount}</div>
+        <div class="stat-label">Out of stock</div>
+      </div>
+    `;
+  }
+
+  initAuthGate(onAppReady);
+</script>
+
+</body>
+</html>
