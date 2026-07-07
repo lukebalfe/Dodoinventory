@@ -113,6 +113,43 @@ a { color: inherit; }
 
 .signout-btn:hover { color: var(--text); border-color: var(--text-faint); }
 
+.nav-toggle-btn {
+  display: none;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1;
+  padding: 6px 12px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  margin-left: auto;
+}
+
+@media (max-width: 760px) {
+  .topnav {
+    flex-wrap: nowrap;
+  }
+  .nav-toggle-btn {
+    display: block;
+  }
+  .nav-links {
+    display: none;
+    flex-direction: column;
+    width: 100%;
+    align-items: stretch;
+    order: 3;
+    gap: 2px;
+  }
+  .nav-links.open {
+    display: flex;
+  }
+  .nav-links a {
+    padding: 12px 14px;
+    border-radius: 6px;
+  }
+}
+
 /* ---------- Page shell ---------- */
 
 .page {
