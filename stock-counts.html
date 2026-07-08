@@ -246,46 +246,92 @@
       : 'No items are assigned to this location yet — assign some on the Locations page first.';
   });
 
-  document.getElementById('count-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const errorEl = document.getElementById('count-form-error');
-    errorEl.textContent = '';
+ document.getElementById('count-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
 
-    const countType = document.getElementById('count-type').value;
-    const locationId = document.getElementById('count-location').value;
-    const dueDate = document.getElementById('count-due-date').value || null;
-    const recurrence = document.getElementById('count-recurrence').value || null;
+  const errorEl = document.getElementById('count-form-error');
+  errorEl.textContent = '';
 
-    if (!locationId) { errorEl.textContent = 'Please choose a location.'; return; }
-    if (countType === 'scheduled' && !dueDate) { errorEl.textContent = 'Please choose a due date for a scheduled count.'; return; }
-    if (previewItemLocations.length === 0) { errorEl.textContent = 'This location has no assigned items to count.'; return; }
+  const countType = document.getElementById('count-type').value;
+  const locationId = document.getElementById('count-location').value;
+  const dueDate = document.getElementById('count-due-date').value || null;
+  const recurrence = document.getElementById('count-recurrence').value || null;
 
-    try {
-      const { data: newCount, error: countErr } = await supabaseClient.from('stock_counts').insert({
-        location_id: locationId,
-        count_type: countType,
-        due_date: countType === 'scheduled' ? dueDate : null,
-        recurrence: countType === 'scheduled' ? recurrence : null,
-        status: 'pending'
-      }).select('id').single();
-      if (countErr) throw countErr;
+  if (!locationId) {
+    errorEl.textContent = 'Please choose a location.';
+    return;
+  }
 
-      const lineItems = previewItemLocations.map(row => ({
-        stock_count_id: newCount.id,
-        item_id: row.item_id,
-        expected_stock: row.stock_on_hand,
-        counted_stock: null
-      }));
-      const { error: itemsErr } = await supabaseClient.from('stock_count_items').insert(lineItems);
-      if (itemsErr) throw itemsErr;
+  if (countType === 'scheduled' && !dueDate) {
+    errorEl.textContent = 'Please choose a due date for a scheduled count.';
+    return;
+  }
+
+  if (countType === 'scheduled' && !recurrence) {
+    errorEl.textContent = 'Please choose weekly or monthly recurrence.';
+    return;
+  }
+
+  if (previewItemLocations.length === 0) {
+    errorEl.textContent = 'This location has no assigned items to count.';
+    return;
+  }
+
+  try {
+    const { data: { user } } = await supabaseClient.auth.getUser();
+
+    if (countType === 'scheduled') {
+      const { error: scheduleErr } = await supabaseClient
+        .from('stock_count_schedules')
+        .insert({
+          location_id: locationId,
+          recurrence,
+          next_due_date: dueDate,
+          is_active: true,
+          created_by: user?.id || null
+        });
+
+      if (scheduleErr) throw scheduleErr;
 
       closeAddCountModal();
-      openCountingView(newCount.id);
-    } catch (err) {
-      errorEl.textContent = err.message || 'Something went wrong creating this stock count.';
+      await loadStockCounts();
+      alert('Recurring stock count schedule created. It will auto-generate counts when due.');
+      return;
     }
-  });
 
+    const { data: newCount, error: countErr } = await supabaseClient
+      .from('stock_counts')
+      .insert({
+        location_id: locationId,
+        count_type: 'one_time',
+        due_date: null,
+        recurrence: null,
+        status: 'pending'
+      })
+      .select('id')
+      .single();
+
+    if (countErr) throw countErr;
+
+    const lineItems = previewItemLocations.map(row => ({
+      stock_count_id: newCount.id,
+      item_id: row.item_id,
+      expected_stock: row.stock_on_hand,
+      counted_stock: null
+    }));
+
+    const { error: itemsErr } = await supabaseClient
+      .from('stock_count_items')
+      .insert(lineItems);
+
+    if (itemsErr) throw itemsErr;
+
+    closeAddCountModal();
+    openCountingView(newCount.id);
+  } catch (err) {
+    errorEl.textContent = err.message || 'Something went wrong creating this stock count.';
+  }
+});
   // ---- Counting view ----
   window.openCountingView = async function(countId) {
     currentCountId = countId;
