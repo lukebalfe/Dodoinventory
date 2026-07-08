@@ -79,33 +79,334 @@
 <script src="app.js"></script>
 <script>
   async function onAppReady() {
-    const statGrid = document.getElementById('stat-grid');
-    statGrid.innerHTML = `<div class="status-line">Loading…</div>`;
+    function fmtMoney(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—';
+  return '$' + Number(value).toFixed(2);
+}
 
-    const { data: products, error } = await supabaseClient
-      .from('products')
-      .select(`id, items ( stock_on_hand, reorder_level )`);
+function daysBetween(a, b) {
+  return Math.max(1, Math.ceil((new Date(b) - new Date(a)) / (1000 * 60 * 60 * 24)));
+}
 
-    if (error) {
-      statGrid.innerHTML = `<div class="error-state"><h2>Couldn't load dashboard</h2><div>${error.message}</div></div>`;
-      return;
-    }
+function itemLabel(item) {
+  const productName = item.products?.name || '';
+  const variant = item.attribute1_value || item.variant_name;
+  return variant && variant !== productName ? `${productName} — ${variant}` : productName || item.sku || 'Unnamed item';
+}
 
-    let outCount = 0;
-    products.forEach(p => {
-      (p.items || []).forEach(item => {
-        if (stockStatus(item) === 'out') outCount++;
-      });
-    });
+async function onAppReady() {
+  const statGrid = document.getElementById('stat-grid');
+  statGrid.innerHTML = `<div class="status-line">Loading dashboard…</div>`;
 
-    statGrid.innerHTML = `
-      <div class="stat-card danger">
-        <div class="stat-value">${outCount}</div>
-        <div class="stat-label">Out of stock</div>
-      </div>
-    `;
+  const sinceDate = new Date();
+  sinceDate.setDate(sinceDate.getDate() - 90);
+
+  const [
+    itemsResult,
+    adjustmentsResult,
+    countsResult
+  ] = await Promise.all([
+    supabaseClient
+      .from('items')
+      .select(`
+        id,
+        sku,
+        variant_name,
+        attribute1_value,
+        purchase_price,
+        stock_on_hand,
+        reorder_level,
+        products ( name )
+      `)
+      .eq('is_active', true),
+
+    supabaseClient
+      .from('stock_adjustments')
+      .select(`
+        id,
+        item_id,
+        previous_stock,
+        new_stock,
+        reason,
+        created_at,
+        items (
+          id,
+          sku,
+          variant_name,
+          attribute1_value,
+          purchase_price,
+          stock_on_hand,
+          products ( name )
+        )
+      `)
+      .gte('created_at', sinceDate.toISOString())
+      .order('created_at', { ascending: true }),
+
+    supabaseClient
+      .from('stock_counts')
+      .select('id, status, due_date')
+      .eq('status', 'pending')
+  ]);
+
+  if (itemsResult.error || adjustmentsResult.error || countsResult.error) {
+    const err = itemsResult.error || adjustmentsResult.error || countsResult.error;
+    statGrid.innerHTML = `<div class="error-state"><h2>Couldn't load dashboard</h2><div>${err.message}</div></div>`;
+    return;
   }
 
+  const items = itemsResult.data || [];
+  const adjustments = adjustmentsResult.data || [];
+  const pendingCounts = countsResult.data || [];
+
+  const inventoryValue = items.reduce((sum, item) => {
+    return sum + (Number(item.stock_on_hand || 0) * Number(item.purchase_price || 0));
+  }, 0);
+
+  const outCount = items.filter(item => Number(item.stock_on_hand || 0) <= 0).length;
+
+  const lowCount = items.filter(item => {
+    const stock = Number(item.stock_on_hand || 0);
+    const reorder = Number(item.reorder_level || 0);
+    return stock > 0 && reorder > 0 && stock <= reorder;
+  }).length;
+
+  const movementByItem = {};
+
+  adjustments.forEach(adj => {
+    const prev = Number(adj.previous_stock ?? 0);
+    const next = Number(adj.new_stock ?? 0);
+    const change = next - prev;
+
+    if (!movementByItem[adj.item_id]) {
+      movementByItem[adj.item_id] = {
+        item: adj.items,
+        used: 0,
+        added: 0,
+        firstDate: adj.created_at,
+        lastDate: adj.created_at
+      };
+    }
+
+    if (change < 0) movementByItem[adj.item_id].used += Math.abs(change);
+    if (change > 0) movementByItem[adj.item_id].added += change;
+
+    movementByItem[adj.item_id].firstDate = movementByItem[adj.item_id].firstDate < adj.created_at
+      ? movementByItem[adj.item_id].firstDate
+      : adj.created_at;
+
+    movementByItem[adj.item_id].lastDate = movementByItem[adj.item_id].lastDate > adj.created_at
+      ? movementByItem[adj.item_id].lastDate
+      : adj.created_at;
+  });
+
+  const movementRows = Object.values(movementByItem)
+    .map(row => {
+      const days = daysBetween(row.firstDate, row.lastDate);
+      const avgDailyUse = row.used / days;
+      const stock = Number(row.item?.stock_on_hand || 0);
+
+      return {
+        ...row,
+        label: itemLabel(row.item || {}),
+        avgDailyUse,
+        daysRemaining: avgDailyUse > 0 ? stock / avgDailyUse : null
+      };
+    });
+
+  const fastest = [...movementRows]
+    .filter(row => row.used > 0)
+    .sort((a, b) => b.avgDailyUse - a.avgDailyUse)
+    .slice(0, 5);
+
+  const slowest = [...movementRows]
+    .filter(row => row.used > 0)
+    .sort((a, b) => a.avgDailyUse - b.avgDailyUse)
+    .slice(0, 5);
+
+  const daysRemainingRows = [...movementRows]
+    .filter(row => row.daysRemaining !== null)
+    .sort((a, b) => a.daysRemaining - b.daysRemaining)
+    .slice(0, 8);
+
+  const trendByDate = {};
+
+  adjustments.forEach(adj => {
+    const dateKey = new Date(adj.created_at).toLocaleDateString();
+
+    if (!trendByDate[dateKey]) {
+      trendByDate[dateKey] = {
+        value: 0,
+        date: dateKey
+      };
+    }
+
+    const itemCost = Number(adj.items?.purchase_price || 0);
+    const nextStock = Number(adj.new_stock || 0);
+    trendByDate[dateKey].value += nextStock * itemCost;
+  });
+
+  const trendRows = Object.values(trendByDate).slice(-14);
+
+  statGrid.innerHTML = `
+    <div class="stat-card good">
+      <div class="stat-value">${fmtMoney(inventoryValue)}</div>
+      <div class="stat-label">Inventory value</div>
+    </div>
+
+    <div class="stat-card danger">
+      <div class="stat-value">${outCount}</div>
+      <div class="stat-label">Out of stock</div>
+    </div>
+
+    <div class="stat-card warn">
+      <div class="stat-value">${lowCount}</div>
+      <div class="stat-label">Low stock</div>
+    </div>
+
+    <div class="stat-card">
+      <div class="stat-value">${pendingCounts.length}</div>
+      <div class="stat-label">Pending stock counts</div>
+    </div>
+  `;
+
+  const page = document.querySelector('.page');
+
+  let analyticsEl = document.getElementById('analytics-dashboard');
+  if (!analyticsEl) {
+    analyticsEl = document.createElement('div');
+    analyticsEl.id = 'analytics-dashboard';
+    page.insertBefore(analyticsEl, document.querySelector('.dash-actions'));
+  }
+
+  analyticsEl.innerHTML = `
+    <div class="analytics-grid">
+      <div class="analytics-card wide">
+        <div class="analytics-card-head">
+          <h2>Stock value trend</h2>
+          <p>Based on stock adjustment history from the last 90 days.</p>
+        </div>
+        <div class="mini-line-chart">
+          ${renderMiniLineChart(trendRows)}
+        </div>
+      </div>
+
+      <div class="analytics-card">
+        <div class="analytics-card-head">
+          <h2>Fastest-moving items</h2>
+          <p>Highest average daily usage.</p>
+        </div>
+        ${renderMovementTable(fastest)}
+      </div>
+
+      <div class="analytics-card">
+        <div class="analytics-card-head">
+          <h2>Slowest-moving items</h2>
+          <p>Lowest average daily usage among used items.</p>
+        </div>
+        ${renderMovementTable(slowest)}
+      </div>
+
+      <div class="analytics-card wide">
+        <div class="analytics-card-head">
+          <h2>Days of stock remaining</h2>
+          <p>Estimated from recent usage. Items with no usage history are excluded.</p>
+        </div>
+        ${renderDaysRemainingTable(daysRemainingRows)}
+      </div>
+    </div>
+  `;
+}
+
+function renderMovementTable(rows) {
+  if (!rows.length) {
+    return `<div class="empty-mini">Not enough movement history yet.</div>`;
+  }
+
+  return `
+    <div class="table-scroll">
+      <table class="sc-table">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Used</th>
+            <th>Avg/day</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(row => `
+            <tr>
+              <td>${row.label}</td>
+              <td>${row.used.toFixed(1)}</td>
+              <td>${row.avgDailyUse.toFixed(2)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderDaysRemainingTable(rows) {
+  if (!rows.length) {
+    return `<div class="empty-mini">Not enough usage history to estimate days remaining.</div>`;
+  }
+
+  return `
+    <div class="table-scroll">
+      <table class="sc-table">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Current stock</th>
+            <th>Avg/day</th>
+            <th>Days left</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(row => `
+            <tr>
+              <td>${row.label}</td>
+              <td>${row.item?.stock_on_hand ?? '—'}</td>
+              <td>${row.avgDailyUse.toFixed(2)}</td>
+              <td>${row.daysRemaining < 1 ? '< 1' : row.daysRemaining.toFixed(1)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderMiniLineChart(rows) {
+  if (!rows.length) {
+    return `<div class="empty-mini">Not enough stock history yet.</div>`;
+  }
+
+  const width = 720;
+  const height = 180;
+  const padding = 18;
+  const max = Math.max(...rows.map(r => r.value), 1);
+  const min = Math.min(...rows.map(r => r.value), 0);
+  const range = Math.max(max - min, 1);
+
+  const points = rows.map((row, index) => {
+    const x = padding + (index * ((width - padding * 2) / Math.max(rows.length - 1, 1)));
+    const y = height - padding - (((row.value - min) / range) * (height - padding * 2));
+    return `${x},${y}`;
+  }).join(' ');
+
+  return `
+    <svg class="trend-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Stock value trend">
+      <polyline points="${points}" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline>
+    </svg>
+    <div class="trend-labels">
+      <span>${rows[0].date}</span>
+      <strong>${fmtMoney(rows[rows.length - 1].value)}</strong>
+      <span>${rows[rows.length - 1].date}</span>
+    </div>
+  `;
+}
+    
   initAuthGate(onAppReady);
 </script>
 
