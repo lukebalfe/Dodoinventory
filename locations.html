@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dodo Coffee Inventory — Locations</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  .loc-layout { display: grid; grid-template-columns: 260px 1fr; gap: 20px; align-items: start; }
+  .loc-list { display: flex; flex-direction: column; gap: 8px; }
+  .loc-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 14px; cursor: pointer;
+  }
+  .loc-card.selected { border-color: var(--accent); background: var(--accent-soft); }
+  .loc-card h4 { font-family: var(--font-display); font-size: 14px; margin: 0 0 3px; }
+  .loc-card p { font-size: 11px; color: var(--text-faint); margin: 0; }
+  .loc-detail { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px; min-height: 200px; }
+  .loc-detail-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+  .loc-detail-header h2 { font-family: var(--font-display); font-size: 18px; margin: 0; }
+  .loc-detail-header p { color: var(--text-faint); font-size: 12px; margin: 4px 0 0; }
+  .assigned-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .assigned-table th { text-align: left; color: var(--text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  .assigned-table td { padding: 10px; border-bottom: 1px solid var(--border); }
+  .assigned-table tr:last-child td { border-bottom: none; }
+  .assigned-table input { width: 70px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: 5px; padding: 5px 7px; font-family: var(--font-mono); font-size: 12px; }
+  .assigned-table select { background: var(--surface-raised); border: 1px solid var(--border); border-radius: 5px; padding: 5px 7px; font-family: var(--font-mono); font-size: 12px; max-width: 150px; }
+</style>
+</head>
+<body>
+
+<div id="login-screen" class="login-screen">
+  <form id="login-form" class="login-box">
+    <img src="assets/dodo-full-logo.png" alt="Dodo Coffee Co" class="login-logo">
+    <p class="login-sub" style="margin-top:-4px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; font-size:11px;">Inventory</p>
+    <p class="login-sub">Sign in with your team account</p>
+    <input type="email" id="login-email" placeholder="Email" required autocomplete="username">
+    <input type="password" id="login-password" placeholder="Password" required autocomplete="current-password">
+    <button type="submit">Sign in</button>
+    <div id="login-error" class="form-error"></div>
+  </form>
+</div>
+
+<div id="app" style="display:none;">
+
+  <nav class="topnav">
+    <div class="nav-brand"><img src="assets/dodo-bird.png" alt="" class="nav-logo"> Dodo Coffee</div>
+    <div class="nav-links">
+      <a href="index.html">Dashboard</a>
+      <a href="items.html">Items</a>
+      <a href="vendors.html">Vendors</a>
+      <a href="locations.html">Locations</a>
+      <a href="stock-counts.html">Stock Counts</a>
+      <a href="stock-adjustments.html">Stock Adjustments</a>
+      <a href="transfer-orders.html">Transfer Orders</a>
+      <a href="purchase-orders.html">Purchase Orders</a>
+    </div>
+    <button id="signout-btn" class="signout-btn">Sign out</button>
+  </nav>
+
+  <div class="page">
+    <div class="page-header">
+      <div>
+        <h1>Locations</h1>
+        <p>Where stock is kept, and how much is where</p>
+      </div>
+      <button class="btn-primary admin-only" style="display:none;" onclick="openAddLocationModal()">+ Add location</button>
+    </div>
+
+    <div id="status-line" class="status-line">Loading locations…</div>
+    <div class="loc-layout" id="loc-layout" style="display:none;">
+      <div class="loc-list" id="loc-list"></div>
+      <div class="loc-detail" id="loc-detail"></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Add location modal -->
+<div id="location-modal-overlay" class="modal-overlay" style="display:none;">
+  <div class="modal-box">
+    <h2>Add location</h2>
+    <form id="location-form">
+      <label>Location name</label>
+      <input type="text" id="loc-name" required placeholder="e.g. Main Warehouse">
+      <label>Address</label>
+      <input type="text" id="loc-address" placeholder="Optional">
+      <div id="location-form-error" class="form-error"></div>
+      <div class="modal-actions">
+        <div></div>
+        <div class="right-actions">
+          <button type="button" class="btn-secondary" onclick="closeLocationModal()">Cancel</button>
+          <button type="submit" class="btn-primary">Save</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Assign item modal -->
+<div id="assign-modal-overlay" class="modal-overlay" style="display:none;">
+  <div class="modal-box">
+    <h2>Assign item to location</h2>
+    <form id="assign-form">
+      <label>Category</label>
+      <select id="assign-category">
+        <option value="">All categories</option>
+      </select>
+
+      <label>Item</label>
+      <input type="text" id="assign-item-search" list="assign-item-options" placeholder="Start typing a product or SKU..." required>
+      <datalist id="assign-item-options"></datalist>
+      <div class="field-row">
+        <div>
+          <label>Stock at this location</label>
+          <input type="number" id="assign-stock" value="0">
+        </div>
+        <div>
+          <label>Reorder point at this location</label>
+          <input type="number" id="assign-reorder" value="0">
+        </div>
+      </div>
+      <label>Maximum stock (optional)</label>
+      <input type="number" id="assign-max-stock" placeholder="Leave blank if not tracked">
+
+      <label>Restock via (optional)</label>
+      <select id="assign-replenish-type">
+        <option value="">None set yet</option>
+        <option value="transfer">Transfer Order — from another location</option>
+        <option value="purchase">Purchase Order — from a vendor</option>
+      </select>
+
+      <div id="assign-transfer-field" style="display:none;">
+        <label>Source location</label>
+        <select id="assign-source-location"></select>
+      </div>
+      <div id="assign-purchase-field" style="display:none;">
+        <label>Vendor</label>
+        <select id="assign-vendor"></select>
+      </div>
+
+      <div id="assign-form-error" class="form-error"></div>
+      <div class="modal-actions">
+        <div></div>
+        <div class="right-actions">
+          <button type="button" class="btn-secondary" onclick="closeAssignModal()">Cancel</button>
+          <button type="submit" class="btn-primary">Assign</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+  let allLocations = [];
+  let allVendors = [];
+  let allItemsFlat = []; // { id, label } for the assign-item datalist
+  let selectedLocationId = null;
+
+  async function loadLocations() {
+    const { data: locations, error: locErr } = await supabaseClient
+      .from('locations')
+      .select('id, name, address')
+      .order('name');
+
+    if (locErr) {
+      document.getElementById('status-line').textContent = '';
+      document.getElementById('loc-layout').style.display = 'none';
+      document.querySelector('.page').insertAdjacentHTML('beforeend', `
+        <div class="error-state"><h2>Couldn't load locations</h2><div>${locErr.message}</div></div>`);
+      return;
+    }
+
+    // Get item-location counts so cards can show "N items"
+    const { data: counts } = await supabaseClient
+      .from('item_locations')
+      .select('location_id');
+
+    const countMap = {};
+    (counts || []).forEach(row => {
+      countMap[row.location_id] = (countMap[row.location_id] || 0) + 1;
+    });
+
+    allLocations = locations.map(l => ({ ...l, itemCount: countMap[l.id] || 0 }));
+
+    const { data: vendors } = await supabaseClient.from('vendors').select('id, name').order('name');
+    allVendors = vendors || [];
+
+    // Build the item picker list for "assign item" (product name + variant + SKU)
+    const { data: products } = await supabaseClient
+      .from('products')
+      .select(`name, categories ( name, parent_category ), items ( id, sku, variant_name, attribute1_value )`);
+
+    allItemsFlat = [];
+    (products || []).forEach(p => {
+      (p.items || []).forEach(item => {
+        const variant = item.attribute1_value || item.variant_name;
+        const label = variant && variant !== p.name
+          ? `${p.name} — ${variant} (${item.sku || 'no SKU'})`
+          : `${p.name} (${item.sku || 'no SKU'})`;
+        allItemsFlat.push({ id: item.id, label, category: p.categories?.name || '', parentCategory: p.categories?.parent_category || null });
+      });
+    });
+    populateCategoryDropdown();
+    filterItemOptions();
+
+    document.getElementById('status-line').style.display = 'none';
+    document.getElementById('loc-layout').style.display = 'grid';
+    renderLocationList();
+
+    if (allLocations.length > 0 && !selectedLocationId) {
+      selectLocation(allLocations[0].id);
+    } else if (selectedLocationId) {
+      selectLocation(selectedLocationId);
+    } else {
+      renderLocationDetail(null);
+    }
+
+    document.querySelectorAll('.admin-only').forEach(el => { el.style.display = isAdmin ? '' : 'none'; });
+  }
+
+  function renderLocationList() {
+    const list = document.getElementById('loc-list');
+    if (allLocations.length === 0) {
+      list.innerHTML = `<div class="status-line">No locations yet.</div>`;
+      return;
+    }
+    list.innerHTML = allLocations.map(loc => `
+      <div class="loc-card ${loc.id === selectedLocationId ? 'selected' : ''}" onclick="selectLocation('${loc.id}')">
+        <h4>${loc.name}</h4>
+        <p>${loc.itemCount} item${loc.itemCount === 1 ? '' : 's'}${loc.address ? ' · ' + loc.address : ''}</p>
+      </div>
+    `).join('');
+  }
+
+  let currentAssignedRaw = [];
+  let currentLocationDetail = null;
+
+  window.selectLocation = async function(locationId) {
+    selectedLocationId = locationId;
+    renderLocationList();
+    const location = allLocations.find(l => l.id === locationId);
+
+    const { data: assigned, error } = await supabaseClient
+      .from('item_locations')
+      .select(`id, stock_on_hand, reorder_level, max_stock, replenishment_type, source_location_id, vendor_id,
+                items ( id, sku, variant_name, attribute1_value, products ( name, categories ( name, parent_category ) ) )`)
+      .eq('location_id', locationId);
+
+    currentAssignedRaw = error ? [] : (assigned || []);
+    currentAssignedRaw.sort((a, b) => {
+      const nameA = a.items?.products?.name || '';
+      const nameB = b.items?.products?.name || '';
+      return nameA.localeCompare(nameB);
+    });
+    currentLocationDetail = location;
+    renderLocationDetail(location, error);
+  };
+
+  function assignedCategoryFilterHtml() {
+    const childToParent = {};
+    currentAssignedRaw.forEach(row => {
+      const cat = row.items?.products?.categories;
+      if (cat?.name) childToParent[cat.name] = cat.parent_category || null;
+    });
+    const allCatNames = new Set(Object.keys(childToParent));
+    Object.values(childToParent).forEach(parent => { if (parent) allCatNames.add(parent); });
+    const topLevel = [...allCatNames].filter(name => !childToParent[name]).sort();
+
+    let html = `<option value="">All categories</option>`;
+    topLevel.forEach(top => {
+      const subs = [...allCatNames].filter(name => childToParent[name] === top).sort();
+      if (subs.length > 0) {
+        html += `<optgroup label="${top}">`;
+        if (childToParent.hasOwnProperty(top)) html += `<option value="${top}">${top} (all)</option>`;
+        subs.forEach(sub => { html += `<option value="${sub}">${sub}</option>`; });
+        html += `</optgroup>`;
+      } else {
+        html += `<option value="${top}">${top}</option>`;
+      }
+    });
+    return html;
+  }
+
+  window.filterAssignedByCategory = function() {
+    renderAssignedTable();
+  };
+
+  function renderAssignedTable() {
+    const categoryFilter = document.getElementById('assigned-category-filter')?.value || '';
+    const location = currentLocationDetail;
+
+    const filtered = categoryFilter
+      ? currentAssignedRaw.filter(row => row.items?.products?.categories?.name === categoryFilter)
+      : currentAssignedRaw;
+
+    const rows = filtered.map(row => {
+      const item = row.items;
+      const productName = item.products?.name || '';
+      const variant = item.attribute1_value || item.variant_name;
+      const label = variant && variant !== productName ? `${productName} — ${variant}` : productName;
+
+      const otherLocations = allLocations.filter(l => l.id !== location.id);
+      const typeSelect = `
+        <select onchange="updateReplenishmentType('${row.id}', this.value)" ${isAdmin ? '' : 'disabled'}>
+          <option value="" ${!row.replenishment_type ? 'selected' : ''}>— none —</option>
+          <option value="transfer" ${row.replenishment_type === 'transfer' ? 'selected' : ''}>Transfer</option>
+          <option value="purchase" ${row.replenishment_type === 'purchase' ? 'selected' : ''}>Purchase</option>
+        </select>`;
+
+      let detailSelect = '<span style="color:var(--text-faint);">—</span>';
+      if (row.replenishment_type === 'transfer') {
+        detailSelect = `
+          <select onchange="updateReplenishmentDetail('${row.id}', 'source_location_id', this.value)" ${isAdmin ? '' : 'disabled'}>
+            <option value="">Choose location...</option>
+            ${otherLocations.map(l => `<option value="${l.id}" ${row.source_location_id === l.id ? 'selected' : ''}>${l.name}</option>`).join('')}
+          </select>`;
+      } else if (row.replenishment_type === 'purchase') {
+        detailSelect = `
+          <select onchange="updateReplenishmentDetail('${row.id}', 'vendor_id', this.value)" ${isAdmin ? '' : 'disabled'}>
+            <option value="">Choose vendor...</option>
+            ${allVendors.map(v => `<option value="${v.id}" ${row.vendor_id === v.id ? 'selected' : ''}>${v.name}</option>`).join('')}
+          </select>`;
+      }
+
+      const isOverstock = row.max_stock !== null && row.max_stock !== undefined && Number(row.stock_on_hand) > Number(row.max_stock);
+
+      return `
+        <tr>
+          <td>${label}${isOverstock ? ' <span class="stamp low" style="background:var(--stock-low-bg); color:var(--stock-low);">Overstock</span>' : ''}</td>
+          <td>${item.sku || '—'}</td>
+          <td><input type="number" value="${row.stock_on_hand ?? 0}" onchange="updateAssignment('${row.id}', 'stock_on_hand', this.value)" ${isAdmin ? '' : 'disabled'}></td>
+          <td><input type="number" value="${row.reorder_level ?? 0}" onchange="updateAssignment('${row.id}', 'reorder_level', this.value)" ${isAdmin ? '' : 'disabled'}></td>
+          <td><input type="number" value="${row.max_stock ?? ''}" placeholder="—" onchange="updateAssignment('${row.id}', 'max_stock', this.value)" ${isAdmin ? '' : 'disabled'}></td>
+          <td>${typeSelect}</td>
+          <td>${detailSelect}</td>
+          <td>${isAdmin ? `<button class="icon-btn" onclick="removeAssignment('${row.id}')">Remove</button>` : ''}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const tableWrap = document.getElementById('assigned-table-wrap');
+    if (!tableWrap) return;
+
+    tableWrap.innerHTML = filtered.length > 0
+      ? `<div class="table-scroll"><table class="assigned-table">
+           <thead><tr><th>Item</th><th>SKU</th><th>Stock here</th><th>Reorder point</th><th>Max stock</th><th>Restock via</th><th>From</th><th></th></tr></thead>
+           <tbody>${rows}</tbody>
+         </table></div>`
+      : `<div class="empty-state"><h2>No items match</h2><div>Try a different category, or assign new items here.</div></div>`;
+  }
+
+  function renderLocationDetail(location, error) {
+    const detail = document.getElementById('loc-detail');
+    if (!location) {
+      detail.innerHTML = `<div class="empty-state"><h2>No location selected</h2><div>Add a location to get started.</div></div>`;
+      return;
+    }
+
+    detail.innerHTML = `
+      <div class="loc-detail-header">
+        <div>
+          <h2>${location.name}</h2>
+          <p>${location.address || 'No address on file'}</p>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn-secondary admin-only" style="display:${isAdmin ? '' : 'none'};" onclick="openAssignModal()">+ Assign item</button>
+          <button class="btn-danger admin-only" style="display:${isAdmin ? '' : 'none'};" onclick="deleteLocation('${location.id}')">Delete location</button>
+        </div>
+      </div>
+      ${error
+        ? `<div class="error-state"><h2>Couldn't load assigned items</h2><div>${error.message}</div></div>`
+        : (currentAssignedRaw.length > 0
+          ? `<select id="assigned-category-filter" onchange="filterAssignedByCategory()" style="margin-bottom:14px;">${assignedCategoryFilterHtml()}</select>
+             <div id="assigned-table-wrap"></div>`
+          : `<div class="empty-state"><h2>No items assigned yet</h2><div>Use "Assign item" to add stock tracking here.</div></div>`)
+      }
+    `;
+
+    if (!error && currentAssignedRaw.length > 0) renderAssignedTable();
+  }
+
+  window.updateAssignment = async function(rowId, field, value) {
+    const payload = { [field]: value === '' ? null : Number(value) };
+    const { error } = await supabaseClient.from('item_locations').update(payload).eq('id', rowId);
+    if (error) { alert('Could not save: ' + error.message); return; }
+    selectLocation(selectedLocationId);
+  };
+
+  window.updateReplenishmentType = async function(rowId, type) {
+    // Switching type clears out the old detail, since a transfer needs a
+    // location and a purchase needs a vendor — not both at once.
+    const payload = type === ''
+      ? { replenishment_type: null, source_location_id: null, vendor_id: null }
+      : { replenishment_type: type, source_location_id: null, vendor_id: null };
+    const { error } = await supabaseClient.from('item_locations').update(payload).eq('id', rowId);
+    if (error) { alert('Could not save: ' + error.message); return; }
+    selectLocation(selectedLocationId);
+  };
+
+  window.updateReplenishmentDetail = async function(rowId, field, value) {
+    const { error } = await supabaseClient.from('item_locations').update({ [field]: value || null }).eq('id', rowId);
+    if (error) { alert('Could not save: ' + error.message); return; }
+    selectLocation(selectedLocationId);
+  };
+
+  window.removeAssignment = async function(rowId) {
+    if (!confirm('Remove this item from the location?')) return;
+    const { error } = await supabaseClient.from('item_locations').delete().eq('id', rowId);
+    if (error) { alert('Could not remove: ' + error.message); return; }
+    selectLocation(selectedLocationId);
+    loadLocations();
+  };
+
+  window.deleteLocation = async function(locationId) {
+    if (!confirm('Delete this location and all its item assignments? This can\'t be undone.')) return;
+    const { error } = await supabaseClient.from('locations').delete().eq('id', locationId);
+    if (error) { alert('Could not delete: ' + error.message); return; }
+    selectedLocationId = null;
+    loadLocations();
+  };
+
+  // ---- Add location modal ----
+  window.openAddLocationModal = function() {
+    document.getElementById('location-form').reset();
+    document.getElementById('location-form-error').textContent = '';
+    document.getElementById('location-modal-overlay').style.display = 'flex';
+  };
+  window.closeLocationModal = function() {
+    document.getElementById('location-modal-overlay').style.display = 'none';
+  };
+  document.getElementById('location-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = document.getElementById('loc-name').value.trim();
+    const address = document.getElementById('loc-address').value.trim() || null;
+    const { error } = await supabaseClient.from('locations').insert({ name, address });
+    if (error) {
+      document.getElementById('location-form-error').textContent = error.message;
+      return;
+    }
+    closeLocationModal();
+    loadLocations();
+  });
+
+  function populateCategoryDropdown() {
+    const childToParent = {};
+    allItemsFlat.forEach(i => {
+      if (i.category) childToParent[i.category] = i.parentCategory || null;
+    });
+    const allCatNames = new Set(Object.keys(childToParent));
+    Object.values(childToParent).forEach(parent => { if (parent) allCatNames.add(parent); });
+
+    const topLevel = [...allCatNames].filter(name => !childToParent[name]).sort();
+
+    let html = `<option value="">All categories</option>`;
+    topLevel.forEach(top => {
+      const subs = [...allCatNames].filter(name => childToParent[name] === top).sort();
+      if (subs.length > 0) {
+        html += `<optgroup label="${top}">`;
+        if (childToParent.hasOwnProperty(top)) html += `<option value="${top}">${top} (all)</option>`;
+        subs.forEach(sub => { html += `<option value="${sub}">${sub}</option>`; });
+        html += `</optgroup>`;
+      } else {
+        html += `<option value="${top}">${top}</option>`;
+      }
+    });
+
+    document.getElementById('assign-category').innerHTML = html;
+  }
+
+  function filterItemOptions() {
+    const category = document.getElementById('assign-category').value;
+    const filtered = category ? allItemsFlat.filter(i => i.category === category) : allItemsFlat;
+    document.getElementById('assign-item-options').innerHTML =
+      filtered.map(i => `<option value="${i.label}">`).join('');
+  }
+
+  document.getElementById('assign-category').addEventListener('change', () => {
+    document.getElementById('assign-item-search').value = '';
+    filterItemOptions();
+  });
+
+  // ---- Assign item modal ----
+  window.openAssignModal = function() {
+    document.getElementById('assign-form').reset();
+    document.getElementById('assign-form-error').textContent = '';
+    filterItemOptions();
+
+    const sourceSelect = document.getElementById('assign-source-location');
+    sourceSelect.innerHTML = '<option value="">Choose location...</option>' +
+      allLocations.filter(l => l.id !== selectedLocationId).map(l => `<option value="${l.id}">${l.name}</option>`).join('');
+
+    const vendorSelect = document.getElementById('assign-vendor');
+    vendorSelect.innerHTML = '<option value="">Choose vendor...</option>' +
+      allVendors.map(v => `<option value="${v.id}">${v.name}</option>`).join('');
+
+    document.getElementById('assign-transfer-field').style.display = 'none';
+    document.getElementById('assign-purchase-field').style.display = 'none';
+
+    document.getElementById('assign-modal-overlay').style.display = 'flex';
+  };
+
+  document.getElementById('assign-replenish-type').addEventListener('change', (e) => {
+    document.getElementById('assign-transfer-field').style.display = e.target.value === 'transfer' ? 'block' : 'none';
+    document.getElementById('assign-purchase-field').style.display = e.target.value === 'purchase' ? 'block' : 'none';
+  });
+  window.closeAssignModal = function() {
+    document.getElementById('assign-modal-overlay').style.display = 'none';
+  };
+  document.getElementById('assign-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errorEl = document.getElementById('assign-form-error');
+    const label = document.getElementById('assign-item-search').value.trim();
+    const match = allItemsFlat.find(i => i.label === label);
+    if (!match) {
+      errorEl.textContent = 'Please pick an item from the list.';
+      return;
+    }
+    const stock = Number(document.getElementById('assign-stock').value) || 0;
+    const reorder = Number(document.getElementById('assign-reorder').value) || 0;
+    const maxStockRaw = document.getElementById('assign-max-stock').value;
+    const maxStock = maxStockRaw === '' ? null : Number(maxStockRaw);
+
+    const replenishType = document.getElementById('assign-replenish-type').value || null;
+    const sourceLocationId = document.getElementById('assign-source-location').value || null;
+    const vendorId = document.getElementById('assign-vendor').value || null;
+
+    if (replenishType === 'transfer' && !sourceLocationId) {
+      errorEl.textContent = 'Please choose a source location for this transfer.';
+      return;
+    }
+    if (replenishType === 'purchase' && !vendorId) {
+      errorEl.textContent = 'Please choose a vendor for this purchase order.';
+      return;
+    }
+
+    const { error } = await supabaseClient.from('item_locations').insert({
+      item_id: match.id,
+      location_id: selectedLocationId,
+      stock_on_hand: stock,
+      reorder_level: reorder,
+      max_stock: maxStock,
+      replenishment_type: replenishType,
+      source_location_id: replenishType === 'transfer' ? sourceLocationId : null,
+      vendor_id: replenishType === 'purchase' ? vendorId : null
+    });
+    if (error) {
+      errorEl.textContent = error.message.includes('duplicate') ? 'That item is already assigned to this location.' : error.message;
+      return;
+    }
+    closeAssignModal();
+    selectLocation(selectedLocationId);
+    loadLocations();
+  });
+
+  initAuthGate(function() {
+    loadLocations();
+    subscribeToTable('item_locations', loadLocations);
+  });
+</script>
+
+</body>
+</html>
