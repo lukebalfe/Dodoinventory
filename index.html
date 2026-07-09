@@ -82,128 +82,15 @@ function fmtMoney(value) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return '—';
   return '$' + Number(value).toFixed(2);
 }
-function daysBetween(a, b) {
-  return Math.max(1, Math.ceil((new Date(b) - new Date(a)) / (1000 * 60 * 60 * 24)));
-}
 
-function itemLabel(item) {
-  const productName = item.products?.name || '';
-  const variant = item.attribute1_value || item.variant_name;
-  return variant && variant !== productName
-    ? `${productName} — ${variant}`
-    : productName || item.sku || 'Unnamed item';
-}
-
-function renderMovementTable(rows) {
-  if (!rows.length) {
-    return `<div class="empty-mini">Not enough movement history yet.</div>`;
-  }
-
-  return `
-    <div class="table-scroll">
-      <table class="sc-table">
-        <thead>
-          <tr>
-            <th>Item</th>
-            <th>Used</th>
-            <th>Avg/day</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows.map(row => `
-            <tr>
-              <td>${row.label}</td>
-              <td>${row.used.toFixed(1)}</td>
-              <td>${row.avgDailyUse.toFixed(2)}</td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
-function renderDaysRemainingTable(rows) {
-  if (!rows.length) {
-    return `<div class="empty-mini">Not enough usage history to estimate days remaining.</div>`;
-  }
-
-  return `
-    <div class="table-scroll">
-      <table class="sc-table">
-        <thead>
-          <tr>
-            <th>Item</th>
-            <th>Current stock</th>
-            <th>Avg/day</th>
-            <th>Days left</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows.map(row => `
-            <tr>
-              <td>${row.label}</td>
-              <td>${row.item?.stock_on_hand ?? '—'}</td>
-              <td>${row.avgDailyUse.toFixed(2)}</td>
-              <td>${row.daysRemaining < 1 ? '< 1' : row.daysRemaining.toFixed(1)}</td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
-function renderMiniLineChart(rows) {
-  if (!rows.length) {
-    return `<div class="empty-mini">Not enough stock history yet.</div>`;
-  }
-
-  const width = 720;
-  const height = 180;
-  const padding = 18;
-  const max = Math.max(...rows.map(r => r.value), 1);
-  const min = Math.min(...rows.map(r => r.value), 0);
-  const range = Math.max(max - min, 1);
-
-  const points = rows.map((row, index) => {
-    const x = padding + (index * ((width - padding * 2) / Math.max(rows.length - 1, 1)));
-    const y = height - padding - (((row.value - min) / range) * (height - padding * 2));
-    return `${x},${y}`;
-  }).join(' ');
-
-  return `
-    <svg class="trend-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Stock value trend">
-      <polyline points="${points}" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline>
-    </svg>
-    <div class="trend-labels">
-      <span>${rows[0].date}</span>
-      <strong>${fmtMoney(rows[rows.length - 1].value)}</strong>
-      <span>${rows[rows.length - 1].date}</span>
-    </div>
-  `;
-}
-  
 async function onAppReady() {
   const statGrid = document.getElementById('stat-grid');
   statGrid.innerHTML = `<div class="status-line">Loading dashboard…</div>`;
 
   try {
-    const sinceDate = new Date();
-    sinceDate.setDate(sinceDate.getDate() - 90);
-
     const { data: items, error: itemsError } = await supabaseClient
       .from('items')
-      .select(`
-        id,
-        sku,
-        variant_name,
-        attribute1_value,
-        stock_on_hand,
-        reorder_level,
-        purchase_price,
-        products ( name )
-      `)
+      .select('id, stock_on_hand, reorder_level, purchase_price')
       .eq('is_active', true);
 
     if (itemsError) throw itemsError;
@@ -254,8 +141,6 @@ async function onAppReady() {
         <div class="stat-label">Pending stock counts</div>
       </div>
     `;
-
-    await loadAnalyticsDashboard(sinceDate);
   } catch (err) {
     statGrid.innerHTML = `
       <div class="error-state">
@@ -265,8 +150,8 @@ async function onAppReady() {
     `;
   }
 }
-  
-  initAuthGate(onAppReady);
+
+initAuthGate(onAppReady);
 </script>
 
 </body>
