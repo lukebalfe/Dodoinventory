@@ -78,23 +78,67 @@
 
 <script src="app.js"></script>
 <script>
+function fmtMoney(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—';
+  return '$' + Number(value).toFixed(2);
+}
+
 async function onAppReady() {
   const statGrid = document.getElementById('stat-grid');
+  statGrid.innerHTML = `<div class="status-line">Loading dashboard…</div>`;
 
   try {
-    const { data: items, error } = await supabaseClient
+    const { data: items, error: itemsError } = await supabaseClient
       .from('items')
-      .select('id, stock_on_hand')
+      .select('id, stock_on_hand, reorder_level, purchase_price')
       .eq('is_active', true);
 
-    if (error) throw error;
+    if (itemsError) throw itemsError;
 
-    const outCount = (items || []).filter(item => Number(item.stock_on_hand || 0) <= 0).length;
+    const safeItems = items || [];
+
+    const inventoryValue = safeItems.reduce((sum, item) => {
+      return sum + Number(item.stock_on_hand || 0) * Number(item.purchase_price || 0);
+    }, 0);
+
+    const outCount = safeItems.filter(item => Number(item.stock_on_hand || 0) <= 0).length;
+
+    const lowCount = safeItems.filter(item => {
+      const stock = Number(item.stock_on_hand || 0);
+      const reorder = Number(item.reorder_level || 0);
+      return stock > 0 && reorder > 0 && stock <= reorder;
+    }).length;
+
+    let pendingCounts = 0;
+
+    const { data: counts, error: countsError } = await supabaseClient
+      .from('stock_counts')
+      .select('id')
+      .eq('status', 'pending');
+
+    if (!countsError) {
+      pendingCounts = (counts || []).length;
+    }
 
     statGrid.innerHTML = `
+      <div class="stat-card good">
+        <div class="stat-value">${fmtMoney(inventoryValue)}</div>
+        <div class="stat-label">Inventory value</div>
+      </div>
+
       <div class="stat-card danger">
         <div class="stat-value">${outCount}</div>
         <div class="stat-label">Out of stock</div>
+      </div>
+
+      <div class="stat-card warn">
+        <div class="stat-value">${lowCount}</div>
+        <div class="stat-label">Low stock</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-value">${pendingCounts}</div>
+        <div class="stat-label">Pending stock counts</div>
       </div>
     `;
   } catch (err) {
