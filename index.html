@@ -189,9 +189,21 @@ async function onAppReady() {
   statGrid.innerHTML = `<div class="status-line">Loading dashboard…</div>`;
 
   try {
+    const sinceDate = new Date();
+    sinceDate.setDate(sinceDate.getDate() - 90);
+
     const { data: items, error: itemsError } = await supabaseClient
       .from('items')
-      .select('id, stock_on_hand, reorder_level, purchase_price')
+      .select(`
+        id,
+        sku,
+        variant_name,
+        attribute1_value,
+        stock_on_hand,
+        reorder_level,
+        purchase_price,
+        products ( name )
+      `)
       .eq('is_active', true);
 
     if (itemsError) throw itemsError;
@@ -242,6 +254,8 @@ async function onAppReady() {
         <div class="stat-label">Pending stock counts</div>
       </div>
     `;
+
+    await loadAnalyticsDashboard(sinceDate);
   } catch (err) {
     statGrid.innerHTML = `
       <div class="error-state">
@@ -251,8 +265,8 @@ async function onAppReady() {
     `;
   }
 }
-
-initAuthGate(onAppReady);
+  
+  initAuthGate(onAppReady);
 </script>
 
 </body>
