@@ -117,6 +117,14 @@
         </div>
       </div>
 
+      <label>Inventory tracking</label>
+      <select id="f-tracking-type">
+        <option value="stocked">Stocked item</option>
+        <option value="made_to_order">Made to order — deduct components when fulfilled</option>
+        <option value="non_inventory">Non-inventory item</option>
+      </select>
+      <div class="field-help" id="tracking-help">This item has its own physical stock count.</div>
+
       <div class="field-row">
         <div>
           <label>Cost of goods sold</label>
@@ -222,7 +230,7 @@
       <div class="item-row" id="${rowId}">
         <div class="item-row-summary" onclick="toggleRow('${item.id}')">
           <img class="item-thumb" src="${esc(item.image_url || '')}" onerror="this.onerror=null; this.src='data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27 fill=%27none%27 stroke=%27%23b0a48d%27 stroke-width=%271.5%27%3E%3Cpath d=%27M21 8l-9-5-9 5 9 5 9-5z%27/%3E%3Cpath d=%27M3 8v8l9 5 9-5V8%27/%3E%3Cpath d=%27M12 13v8%27/%3E%3C/svg%3E'; this.style.padding='7px';">
-          <div class="item-row-name"><a href="item-detail.html?id=${item.id}" onclick="event.stopPropagation();" style="color:inherit; text-decoration:none;">${esc(displayName)}</a>${item.is_composite ? ' <span style="font-size:9px; text-transform:uppercase; letter-spacing:0.04em; background:var(--accent-soft); color:var(--accent-hover); padding:2px 7px; border-radius:999px;">Composite</span>' : ''}</div>
+          <div class="item-row-name"><a href="item-detail.html?id=${item.id}" onclick="event.stopPropagation();" style="color:inherit; text-decoration:none;">${esc(displayName)}</a>${item.tracking_type === 'made_to_order' ? ' <span class="tracking-badge made">Made to order</span>' : (item.tracking_type === 'non_inventory' ? ' <span class="tracking-badge">Non-inventory</span>' : '')}</div>
           <div class="item-row-sku">${esc(item.sku || item.item_code || '—')}</div>
           <div class="item-row-stock">${item.stock_on_hand ?? '—'}</div>
           ${status !== 'good' ? `<span class="stamp ${status}">${stockLabel(status)}</span>` : ''}
@@ -422,7 +430,7 @@
         categories ( name, parent_category ),
         vendors ( name ),
         items ( id, item_code, variant_name, sku, purchase_price, selling_price,
-                stock_on_hand, reorder_level, location_name, image_url, is_composite, is_active,
+                stock_on_hand, reorder_level, location_name, image_url, is_composite, is_active, tracking_type,
                 attribute1_value, attribute2_value, attribute3_value )
       `)
       .order('name');
@@ -517,6 +525,20 @@
     document.getElementById('composite-section').style.display = e.target.checked ? 'block' : 'none';
   });
 
+  function updateTrackingUi() {
+    const type = document.getElementById('f-tracking-type').value;
+    const made = type === 'made_to_order';
+    document.getElementById('f-is-composite').checked = made;
+    document.getElementById('f-is-composite').disabled = made;
+    document.getElementById('composite-section').style.display = made || document.getElementById('f-is-composite').checked ? 'block' : 'none';
+    document.getElementById('f-stock').disabled = type !== 'stocked';
+    document.getElementById('f-reorder').disabled = type !== 'stocked';
+    document.getElementById('tracking-help').textContent = made
+      ? 'This item is not stocked. Its BOM components are deducted during fulfillment.'
+      : (type === 'non_inventory' ? 'No stock or component deductions will be recorded.' : 'This item has its own physical stock count.');
+  }
+  document.getElementById('f-tracking-type').addEventListener('change', updateTrackingUi);
+
   window.addComponentRow = function() {
     const label = document.getElementById('component-item-search').value.trim();
     const qty = Number(document.getElementById('component-qty').value) || 1;
@@ -589,6 +611,8 @@
     document.getElementById('f-is-composite').checked = false;
     document.getElementById('composite-section').style.display = 'none';
     document.getElementById('f-is-inactive').checked = false;
+    document.getElementById('f-tracking-type').value = 'stocked';
+    updateTrackingUi();
     currentComponents = [];
     renderComponentRows();
     document.getElementById('new-category-row').style.display = 'none';
@@ -621,6 +645,7 @@
     document.getElementById('f-stock').value = item.stock_on_hand ?? '';
     document.getElementById('f-original-stock').value = item.stock_on_hand ?? '';
     document.getElementById('f-reorder').value = item.reorder_level ?? '';
+    document.getElementById('f-tracking-type').value = item.tracking_type || 'stocked';
 
     const locSelect = document.getElementById('f-stock-location');
     locSelect.innerHTML = '<option value="">Choose a location...</option>' +
@@ -635,6 +660,7 @@
     document.getElementById('f-is-composite').checked = !!item.is_composite;
     document.getElementById('composite-section').style.display = item.is_composite ? 'block' : 'none';
     document.getElementById('f-is-inactive').checked = item.is_active === false;
+    updateTrackingUi();
     currentComponents = [];
     renderComponentRows();
     document.getElementById('new-category-row').style.display = 'none';
@@ -713,6 +739,7 @@
     const stockReason = document.getElementById('f-stock-reason').value.trim();
     const stockLocationId = document.getElementById('f-stock-location').value;
     const stockChanged = mode === 'edit' && String(originalStock) !== String(stock);
+    const trackingType = document.getElementById('f-tracking-type').value;
 
     if (stockChanged) {
       if (!stockReason) {
@@ -753,8 +780,9 @@
           sku,
           purchase_price: purchasePrice === '' ? null : Number(purchasePrice),
           selling_price: sellingPrice === '' ? null : Number(sellingPrice),
-          stock_on_hand: stock === '' ? null : Number(stock),
-          reorder_level: reorder === '' ? null : Number(reorder),
+          stock_on_hand: trackingType === 'stocked' && stock !== '' ? Number(stock) : null,
+          reorder_level: trackingType === 'stocked' && reorder !== '' ? Number(reorder) : null,
+          tracking_type: trackingType,
           attribute1_name: variant ? 'Variant' : null,
           attribute1_value: variant || null,
           item_code: sku || (slugify(variant || name) + '-' + Date.now().toString().slice(-5))
@@ -772,8 +800,9 @@
           sku,
           purchase_price: purchasePrice === '' ? null : Number(purchasePrice),
           selling_price: sellingPrice === '' ? null : Number(sellingPrice),
-          stock_on_hand: stock === '' ? null : Number(stock),
-          reorder_level: reorder === '' ? null : Number(reorder),
+          stock_on_hand: trackingType === 'stocked' && stock !== '' ? Number(stock) : null,
+          reorder_level: trackingType === 'stocked' && reorder !== '' ? Number(reorder) : null,
+          tracking_type: trackingType,
           attribute1_name: variant ? 'Variant' : null,
           attribute1_value: variant || null
         }).eq('id', itemId);
@@ -805,7 +834,7 @@
         await supabaseClient.from('items').update({ image_url: imageUrl }).eq('id', itemId);
       }
 
-      const isComposite = document.getElementById('f-is-composite').checked;
+      const isComposite = trackingType === 'made_to_order' || document.getElementById('f-is-composite').checked;
       const isActive = !document.getElementById('f-is-inactive').checked;
       await supabaseClient.from('items').update({ is_composite: isComposite, is_active: isActive }).eq('id', itemId);
 

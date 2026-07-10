@@ -134,6 +134,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const navLinks = document.querySelector('.nav-links');
   if (!nav || !navLinks) return;
 
+  // Fulfillment is shared by every page without duplicating navigation markup.
+  if (!navLinks.querySelector('a[href="fulfillments.html"]')) {
+    const fulfillmentLink = document.createElement('a');
+    fulfillmentLink.href = 'fulfillments.html';
+    fulfillmentLink.textContent = 'Fulfillment';
+    if (current === 'fulfillments.html') fulfillmentLink.classList.add('active');
+    navLinks.appendChild(fulfillmentLink);
+  }
+
   const toggleBtn = document.createElement('button');
   toggleBtn.className = 'nav-toggle-btn';
   toggleBtn.setAttribute('aria-label', 'Toggle navigation menu');

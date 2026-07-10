@@ -49,6 +49,18 @@ python3 -m http.server 8000
 
 Then open `http://localhost:8000`.
 
+## Made-to-order setup
+
+Before using made-to-order fulfillment, open the Supabase SQL editor and run
+`supabase-made-to-order.sql` once. This adds item tracking types, fulfillment
+history, component movements, and the atomic fulfillment/reversal functions.
+
+Then edit each finished product and choose **Made to order** under Inventory
+tracking. Add its stocked ingredients and packaging to the Components list.
+The Fulfillment page will calculate availability and deduct those components
+when an order is packed. Reversing a fulfillment returns every component to
+the same location and leaves a linked stock-adjustment audit trail.
+
 ## Configuration
 
 The Supabase project URL and anon (public) key live at the top of `app.js`. The anon key is safe to ship to the browser **only if Row Level Security (RLS) is enabled on every table** — make sure RLS policies restrict reads/writes to authenticated users, and admin-only writes to members of the `admins` table. The `.admin-only` UI hiding is cosmetic; RLS is what actually enforces permissions.

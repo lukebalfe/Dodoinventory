@@ -152,6 +152,18 @@ a { color: inherit; }
   }
 }
 
+.field-help { color: var(--text-faint); font-size: 12px; margin-top: 6px; }
+.tracking-badge { display:inline-block; margin-left:7px; padding:3px 7px; border-radius:999px; background:#efede8; color:var(--text-dim); font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; vertical-align:2px; }
+.tracking-badge.made { background:var(--accent2-soft); color:var(--accent2); }
+.fulfillment-lines { display:flex; flex-direction:column; gap:9px; margin:14px 0; }
+.fulfillment-line { display:grid; grid-template-columns:minmax(0,1fr) 100px 36px; gap:8px; align-items:center; }
+.availability-note { color:var(--text-faint); font-size:11px; margin-top:4px; }
+.history-card { padding:18px 20px; margin-bottom:10px; }
+.history-head { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; }
+.history-ref { font-weight:680; }
+.history-meta { color:var(--text-faint); font-size:12px; margin-top:3px; }
+@media(max-width:600px){.fulfillment-line{grid-template-columns:1fr 74px 36px}.history-head{flex-direction:column}}
+
 /* ---------- Page shell ---------- */
 
 .page {
