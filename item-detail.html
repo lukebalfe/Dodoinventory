@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dodo Coffee Inventory — Item Detail</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+
+<!-- Home screen / app-icon support -->
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" href="assets/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Dodo Inventory">
+<meta name="theme-color" content="#4b3621">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  .back-link { display: inline-flex; align-items: center; gap: 6px; color: var(--text-dim); text-decoration: none; font-size: 13px; margin-bottom: 16px; }
+  .back-link:hover { color: var(--text); }
+  .detail-top { display: grid; grid-template-columns: 160px 1fr; gap: 24px; margin-bottom: 24px; }
+  .detail-photo { width: 160px; height: 160px; border-radius: var(--radius); object-fit: cover; background: var(--surface-raised); border: 1px solid var(--border); }
+  .detail-name { font-family: var(--font-display); font-size: 26px; font-weight: 700; margin: 0 0 4px; }
+  .detail-sub { color: var(--text-faint); font-size: 13px; margin: 0 0 14px; }
+  .detail-stat-row { display: flex; gap: 28px; flex-wrap: wrap; }
+  .detail-stat .k { display: block; color: var(--text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 3px; }
+  .detail-stat .v { font-family: var(--font-display); font-weight: 600; font-size: 18px; }
+  .detail-stat .v a { color: var(--accent); text-decoration: underline; }
+  .loc-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .loc-table th { text-align: left; color: var(--text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  .loc-table td { padding: 10px; border-bottom: 1px solid var(--border); }
+  .loc-table tr:last-child td { border-bottom: none; }
+  .loc-table tr.total-row td { font-weight: 700; border-top: 2px solid var(--border); border-bottom: none; }
+</style>
+</head>
+<body>
+
+<div id="login-screen" class="login-screen">
+  <form id="login-form" class="login-box">
+    <img src="assets/dodo-full-logo.png" alt="Dodo Coffee Co" class="login-logo">
+    <p class="login-sub" style="margin-top:-4px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; font-size:11px;">Inventory</p>
+    <p class="login-sub">Sign in with your team account</p>
+    <input type="email" id="login-email" placeholder="Email" required autocomplete="username">
+    <input type="password" id="login-password" placeholder="Password" required autocomplete="current-password">
+    <button type="submit">Sign in</button>
+    <div id="login-error" class="form-error"></div>
+  </form>
+</div>
+
+<div id="app" style="display:none;">
+
+  <nav class="topnav">
+    <div class="nav-brand"><img src="assets/dodo-bird.png" alt="" class="nav-logo"> Dodo Coffee</div>
+    <div class="nav-links">
+      <a href="index.html">Dashboard</a>
+      <a href="items.html">Items</a>
+      <a href="vendors.html">Vendors</a>
+      <a href="locations.html">Locations</a>
+      <a href="stock-counts.html">Stock Counts</a>
+      <a href="stock-adjustments.html">Stock Adjustments</a>
+      <a href="transfer-orders.html">Transfer Orders</a>
+      <a href="purchase-orders.html">Purchase Orders</a>
+    </div>
+    <button id="signout-btn" class="signout-btn">Sign out</button>
+  </nav>
+
+  <div class="page">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <a href="items.html" class="back-link">← Back to items</a>
+      <button class="btn-secondary admin-only" style="display:none;" onclick="editThisItem()">Edit item</button>
+    </div>
+    <div id="detail-content">
+      <div class="status-line">Loading item…</div>
+    </div>
+  </div>
+
+</div>
+
+<script src="app.js"></script>
+<script>
+  const itemId = new URLSearchParams(location.search).get('id');
+
+  function money(v) {
+    if (v === null || v === undefined) return '—';
+    return '$' + Number(v).toFixed(2);
+  }
+
+  async function loadItemDetail() {
+    const content = document.getElementById('detail-content');
+
+    if (!itemId) {
+      content.innerHTML = `<div class="error-state"><h2>No item specified</h2><div>Go back to the Items page and click an item to view its details.</div></div>`;
+      return;
+    }
+
+    const { data: item, error } = await supabaseClient
+      .from('items')
+      .select(`
+        id, sku, variant_name, attribute1_value, purchase_price, selling_price,
+        stock_on_hand, reorder_level, image_url, is_composite,
+        products ( id, name, description, categories ( name ), vendors ( id, name ) )
+      `)
+      .eq('id', itemId)
+      .single();
+
+    if (error) {
+      content.innerHTML = `<div class="error-state"><h2>Couldn't load this item</h2><div>${error.message}</div></div>`;
+      return;
+    }
+
+    const { data: locRows, error: locErr } = await supabaseClient
+      .from('item_locations')
+      .select(`id, stock_on_hand, reorder_level, max_stock, replenishment_type, source_location_id, vendor_id, locations!location_id ( name )`)
+      .eq('item_id', itemId);
+
+    const product = item.products;
+    const variant = item.attribute1_value || item.variant_name;
+    const displayName = variant && variant !== product?.name ? `${product?.name} — ${variant}` : product?.name;
+
+    const totalStock = (locRows || []).reduce((sum, r) => sum + (Number(r.stock_on_hand) || 0), 0);
+
+    const locRowsHtml = (locRows || []).map(r => {
+      const isOverstock = r.max_stock !== null && r.max_stock !== undefined && Number(r.stock_on_hand) > Number(r.max_stock);
+      const orderType = r.replenishment_type === 'transfer' ? 'Transfer Order'
+        : r.replenishment_type === 'purchase' ? 'Purchase Order' : '—';
+      return `
+        <tr>
+          <td>${r.locations?.name || '—'}</td>
+          <td>${r.stock_on_hand ?? 0}${isOverstock ? ' <span class="stamp low" style="background:var(--stock-low-bg); color:var(--stock-low);">Overstock</span>' : ''}</td>
+          <td>${r.max_stock ?? '—'}</td>
+          <td>${r.reorder_level ?? '—'}</td>
+          <td>${orderType}</td>
+        </tr>
+      `;
+    }).join('');
+
+    let compositeSectionHtml = '';
+    if (item.is_composite) {
+      const { data: components } = await supabaseClient
+        .from('composite_components')
+        .select(`quantity_required, component_item_id, items:component_item_id ( sku, variant_name, attribute1_value, products ( name ) )`)
+        .eq('composite_item_id', itemId);
+
+      const { data: locsForAssemble } = await supabaseClient.from('locations').select('id, name').order('name');
+
+      const compRows = (components || []).map(c => {
+        const productName = c.items?.products?.name || '';
+        const variant = c.items?.attribute1_value || c.items?.variant_name;
+        const label = variant && variant !== productName ? `${productName} — ${variant}` : productName;
+        return `<tr><td>${label}</td><td>${c.items?.sku || '—'}</td><td>${c.quantity_required}</td></tr>`;
+      }).join('');
+
+      compositeSectionHtml = `
+        <h3 style="font-family:var(--font-display); font-size:16px; margin: 24px 0 10px;">Composite item — components</h3>
+        <table class="loc-table" style="margin-bottom:16px;">
+          <thead><tr><th>Component</th><th>SKU</th><th>Qty per unit</th></tr></thead>
+          <tbody>${compRows || '<tr><td colspan="3">No components set up yet — edit this item to add some.</td></tr>'}</tbody>
+        </table>
+        <div class="card" style="padding:16px; max-width:420px;">
+          <label style="display:block; font-size:11px; text-transform:uppercase; color:var(--text-faint); margin-bottom:5px;">Assemble stock</label>
+          <input type="number" id="assemble-qty" placeholder="Quantity to assemble" style="width:100%; margin-bottom:8px; background:var(--surface-raised); border:1px solid var(--border); border-radius:6px; padding:8px; font-family:var(--font-mono);">
+          <select id="assemble-location" style="width:100%; margin-bottom:8px; background:var(--surface-raised); border:1px solid var(--border); border-radius:6px; padding:8px; font-family:var(--font-mono);">
+            <option value="">Choose location components come from...</option>
+            ${(locsForAssemble || []).map(l => `<option value="${l.id}">${l.name}</option>`).join('')}
+          </select>
+          <div id="assemble-error" class="form-error"></div>
+          <button class="btn-primary" onclick="assembleComposite()">Assemble stock</button>
+        </div>
+      `;
+    }
+
+    content.innerHTML = `
+      <div class="detail-top">
+        <img class="detail-photo" src="${item.image_url || ''}" onerror="this.onerror=null; this.src='data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27 fill=%27none%27 stroke=%27%23b0a48d%27 stroke-width=%271%27%3E%3Cpath d=%27M21 8l-9-5-9 5 9 5 9-5z%27/%3E%3Cpath d=%27M3 8v8l9 5 9-5V8%27/%3E%3Cpath d=%27M12 13v8%27/%3E%3C/svg%3E'; this.style.padding='50px';">
+        <div>
+          <h1 class="detail-name">${displayName || 'Unnamed item'}</h1>
+          <p class="detail-sub">${product?.categories?.name || 'Uncategorized'} · SKU: ${item.sku || '—'}</p>
+          <div class="detail-stat-row">
+            <div class="detail-stat"><span class="k">Total stock (all locations)</span><span class="v">${totalStock}</span></div>
+            <div class="detail-stat"><span class="k">Cost of goods sold</span><span class="v">${money(item.purchase_price)}</span></div>
+            <div class="detail-stat"><span class="k">Selling price</span><span class="v">${money(item.selling_price)}</span></div>
+            <div class="detail-stat"><span class="k">Vendor</span><span class="v">${product?.vendors?.name ? `<a href="vendors.html?vendor=${product.vendors.id}">${product.vendors.name}</a>` : '—'}</span></div>
+          </div>
+        </div>
+      </div>
+
+      ${product?.description ? `<p style="color:var(--text-dim); margin-bottom:20px;">${product.description}</p>` : ''}
+
+      <h3 style="font-family:var(--font-display); font-size:16px; margin-bottom:10px;">Stock by location</h3>
+      ${locErr
+        ? `<div class="error-state"><h2>Couldn't load location stock</h2><div>${locErr.message}</div></div>`
+        : (locRows && locRows.length > 0
+          ? `<table class="loc-table">
+               <thead><tr><th>Location</th><th>Stock</th><th>Max stock</th><th>Reorder level</th><th>Restock via</th></tr></thead>
+               <tbody>
+                 ${locRowsHtml}
+                 <tr class="total-row"><td>Total</td><td>${totalStock}</td><td colspan="3"></td></tr>
+               </tbody>
+             </table>`
+          : `<div class="empty-state"><h2>Not assigned to any location yet</h2><div>Assign it from the Locations page to start tracking stock per location.</div></div>`)
+      }
+
+      ${compositeSectionHtml}
+    `;
+  }
+
+  window.assembleComposite = async function() {
+    const errorEl = document.getElementById('assemble-error');
+    errorEl.textContent = '';
+
+    const qty = Number(document.getElementById('assemble-qty').value);
+    const locationId = document.getElementById('assemble-location').value;
+    if (!qty || qty <= 0) { errorEl.textContent = 'Enter a quantity greater than 0.'; return; }
+    if (!locationId) { errorEl.textContent = 'Choose the location components will come from.'; return; }
+
+    const { data: components, error: compErr } = await supabaseClient
+      .from('composite_components')
+      .select(`component_item_id, quantity_required, items:component_item_id ( products ( name ) )`)
+      .eq('composite_item_id', itemId);
+
+    if (compErr) { errorEl.textContent = compErr.message; return; }
+    if (!components || components.length === 0) { errorEl.textContent = 'No components set up for this item yet — edit it to add some.'; return; }
+
+    // Check every component has enough stock before changing anything
+    const shortages = [];
+    const componentState = {};
+    for (const c of components) {
+      const needed = c.quantity_required * qty;
+      const { data: row } = await supabaseClient
+        .from('item_locations').select('id, stock_on_hand')
+        .eq('item_id', c.component_item_id).eq('location_id', locationId).maybeSingle();
+      const available = row ? Number(row.stock_on_hand || 0) : 0;
+      componentState[c.component_item_id] = { row, available, needed };
+      if (available < needed) {
+        shortages.push(`${c.items?.products?.name || 'item'} (need ${needed}, have ${available})`);
+      }
+    }
+    if (shortages.length > 0) {
+      errorEl.textContent = 'Not enough stock to assemble: ' + shortages.join(', ');
+      return;
+    }
+
+    try {
+      const { data: { user } } = await supabaseClient.auth.getUser();
+
+      for (const c of components) {
+        const { row, available, needed } = componentState[c.component_item_id];
+        const newStock = available - needed;
+        await supabaseClient.from('item_locations').update({ stock_on_hand: newStock }).eq('id', row.id);
+        await supabaseClient.from('items').update({ stock_on_hand: newStock }).eq('id', c.component_item_id);
+        await supabaseClient.from('stock_adjustments').insert({
+          item_id: c.component_item_id, location_id: locationId,
+          previous_stock: available, new_stock: newStock,
+          reason: 'Used to assemble a composite item', changed_by: user?.id || null
+        });
+      }
+
+      const { data: compositeRow } = await supabaseClient.from('items').select('stock_on_hand').eq('id', itemId).single();
+      const previousComposite = Number(compositeRow.stock_on_hand || 0);
+      const newCompositeStock = previousComposite + qty;
+      await supabaseClient.from('items').update({ stock_on_hand: newCompositeStock }).eq('id', itemId);
+
+      const { data: compositeLocRow } = await supabaseClient
+        .from('item_locations').select('id, stock_on_hand')
+        .eq('item_id', itemId).eq('location_id', locationId).maybeSingle();
+      if (compositeLocRow) {
+        await supabaseClient.from('item_locations')
+          .update({ stock_on_hand: Number(compositeLocRow.stock_on_hand || 0) + qty })
+          .eq('id', compositeLocRow.id);
+      }
+
+      await supabaseClient.from('stock_adjustments').insert({
+        item_id: itemId, location_id: locationId,
+        previous_stock: previousComposite, new_stock: newCompositeStock,
+        reason: 'Composite item assembled', changed_by: user?.id || null
+      });
+
+      document.getElementById('assemble-qty').value = '';
+      loadItemDetail();
+    } catch (err) {
+      errorEl.textContent = err.message || 'Something went wrong assembling this item.';
+    }
+  };
+
+  window.editThisItem = function() {
+    location.href = 'items.html?edit=' + encodeURIComponent(itemId);
+  };
+
+  initAuthGate(function() {
+    loadItemDetail();
+    subscribeToTable('item_locations', loadItemDetail);
+    subscribeToTable('items', loadItemDetail);
+  });
+</script>
+
+</body>
+</html>
