@@ -1,0 +1,11 @@
+{
+  "name": "Dodo Coffee Inventory",
+  "short_name": "Dodo Inventory",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#dcd7bf",
+  "theme_color": "#4b3621",
+  "icons": [
+    { "src": "assets/dodo-bird-only.png", "sizes": "any", "type": "image/png", "purpose": "any" }
+  ]
+}
