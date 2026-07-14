@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dodo Coffee Inventory — Stock Counts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+
+<!-- Home screen / app-icon support -->
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" href="assets/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Dodo Inventory">
+<meta name="theme-color" content="#4b3621">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  .sc-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .sc-table th { text-align: left; color: var(--text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  .sc-table td { padding: 10px; border-bottom: 1px solid var(--border); }
+  .sc-table tr:last-child td { border-bottom: none; }
+  .status-pill { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; padding: 3px 9px; border-radius: 999px; }
+  .status-pill.pending { color: var(--stock-low); background: var(--stock-low-bg); }
+  .status-pill.completed { color: var(--stock-good); background: var(--stock-good-bg); }
+  .count-input { width: 90px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: 5px; padding: 6px 8px; font-family: var(--font-mono); font-size: 13px; }
+  .count-input.filled { border-color: var(--stock-good); }
+  .expected-hint { color: var(--text-faint); font-size: 11px; }
+</style>
+</head>
+<body>
+
+<div id="login-screen" class="login-screen">
+  <form id="login-form" class="login-box">
+    <img src="assets/dodo-full-logo.png" alt="Dodo Coffee Co" class="login-logo">
+    <p class="login-sub" style="margin-top:-4px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; font-size:11px;">Inventory</p>
+    <p class="login-sub">Sign in with your team account</p>
+    <input type="email" id="login-email" placeholder="Email" required autocomplete="username">
+    <input type="password" id="login-password" placeholder="Password" required autocomplete="current-password">
+    <button type="submit">Sign in</button>
+    <div id="login-error" class="form-error"></div>
+  </form>
+</div>
+
+<div id="app" style="display:none;">
+
+  <nav class="topnav">
+    <div class="nav-brand"><img src="assets/dodo-bird.png" alt="" class="nav-logo"> Dodo Coffee</div>
+    <div class="nav-links">
+      <a href="index.html">Dashboard</a>
+      <a href="items.html">Items</a>
+      <a href="vendors.html">Vendors</a>
+      <a href="locations.html">Locations</a>
+      <a href="stock-counts.html">Stock Counts</a>
+      <a href="stock-adjustments.html">Stock Adjustments</a>
+      <a href="transfer-orders.html">Transfer Orders</a>
+      <a href="purchase-orders.html">Purchase Orders</a>
+    </div>
+    <button id="signout-btn" class="signout-btn">Sign out</button>
+  </nav>
+
+  <div class="page">
+
+    <!-- LOG VIEW -->
+    <div id="log-view">
+      <div class="page-header">
+        <div>
+          <h1>Stock Counts</h1>
+          <p>Scheduled and one-time counts, pending and completed</p>
+        </div>
+        <button class="btn-primary admin-only" style="display:none;" onclick="openAddCountModal()">+ Add stock count</button>
+      </div>
+      <div id="log-status-line" class="status-line">Loading…</div>
+      <div id="log-table-wrap"></div>
+
+      <div class="section-title" style="font-family:var(--font-display); font-size:16px; margin:28px 0 10px;">Recurring schedules</div>
+      <div id="schedules-status-line" class="status-line">Loading…</div>
+      <div id="schedules-table-wrap"></div>
+    </div>
+
+    <!-- COUNTING VIEW -->
+    <div id="counting-view" style="display:none;">
+      <a href="#" onclick="showLogView(); return false;" class="back-link" style="display:inline-flex; align-items:center; gap:6px; color:var(--text-dim); text-decoration:none; font-size:13px; margin-bottom:16px;">← Back to stock counts</a>
+      <div class="page-header">
+        <div>
+          <h1 id="counting-title">Count</h1>
+          <p id="counting-sub"></p>
+        </div>
+        <button class="btn-primary" id="submit-count-btn" onclick="submitStockCount()">Submit stock count</button>
+      </div>
+      <div id="counting-error" class="form-error" style="margin-bottom:12px;"></div>
+      <div id="counting-table-wrap"></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Add stock count modal -->
+<div id="count-modal-overlay" class="modal-overlay" style="display:none;">
+  <div class="modal-box">
+    <h2>Add stock count</h2>
+    <form id="count-form">
+      <label>Type</label>
+      <select id="count-type">
+        <option value="one_time">One-time</option>
+        <option value="scheduled">Scheduled</option>
+      </select>
+
+      <div id="scheduled-fields" style="display:none;">
+        <label>Due date</label>
+        <input type="date" id="count-due-date">
+        <label>Repeats</label>
+        <select id="count-recurrence">
+          <option value="">None</option>
+          <option value="weekly">Weekly</option>
+          <option value="monthly">Monthly</option>
+        </select>
+      </div>
+
+      <label>Location</label>
+      <select id="count-location" required><option value="">Choose a location...</option></select>
+      <div id="count-preview" class="expected-hint" style="margin-top:6px;"></div>
+
+      <div id="count-form-error" class="form-error"></div>
+      <div class="modal-actions">
+        <div></div>
+        <div class="right-actions">
+          <button type="button" class="btn-secondary" onclick="closeAddCountModal()">Cancel</button>
+          <button type="submit" class="btn-primary">Create stock count</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+  let allLocationsForCount = [];
+  let previewItemLocations = [];
+  let currentCountId = null;
+
+  function fmtDate(d) {
+    if (!d) return '—';
+    return new Date(d).toLocaleDateString();
+  }
+  function fmtDateTime(d) {
+    if (!d) return '—';
+    const dt = new Date(d);
+    return dt.toLocaleDateString() + ' ' + dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  // ---- Log view ----
+  async function loadStockCounts() {
+    const { data, error } = await supabaseClient
+      .from('stock_counts')
+      .select(`id, count_type, due_date, recurrence, status, created_at, completed_at, locations ( name )`)
+      .order('created_at', { ascending: false });
+
+    const statusLine = document.getElementById('log-status-line');
+    const wrap = document.getElementById('log-table-wrap');
+
+    if (error) {
+      statusLine.textContent = '';
+      wrap.innerHTML = `<div class="error-state"><h2>Couldn't load stock counts</h2><div>${error.message}</div></div>`;
+      return;
+    }
+
+    statusLine.textContent = `${data.length} stock count${data.length === 1 ? '' : 's'}`;
+
+    if (data.length === 0) {
+      wrap.innerHTML = `<div class="empty-state"><h2>No stock counts yet</h2><div>Use "Add stock count" to start one.</div></div>`;
+      return;
+    }
+
+    const rows = data.map(row => `
+      <tr>
+        <td>${row.locations?.name || '—'}</td>
+        <td>${row.count_type === 'scheduled' ? 'Scheduled' : 'One-time'}</td>
+        <td>${fmtDate(row.due_date)}</td>
+        <td><span class="status-pill ${row.status}">${row.status}</span></td>
+        <td>${fmtDateTime(row.created_at)}</td>
+        <td>${row.completed_at ? fmtDateTime(row.completed_at) : '—'}</td>
+        <td>
+          <button class="btn-secondary" onclick="openCountingView('${row.id}')">${row.status === 'pending' ? 'Continue' : 'View'}</button>
+          <!-- New: delete a stock count (removes its line items too via DB cascade) -->
+          <button class="btn-danger admin-only" style="display:${isAdmin ? '' : 'none'};" onclick="deleteStockCount('${row.id}')">Delete</button>
+        </td>
+      </tr>
+    `).join('');
+
+    wrap.innerHTML = `
+      <div class="table-scroll"><table class="sc-table">
+        <thead><tr><th>Location</th><th>Type</th><th>Due date</th><th>Status</th><th>Created</th><th>Completed</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    `;
+
+    document.querySelectorAll('.admin-only').forEach(el => { el.style.display = isAdmin ? '' : 'none'; });
+  }
+
+  window.showLogView = function() {
+    document.getElementById('counting-view').style.display = 'none';
+    document.getElementById('log-view').style.display = 'block';
+    currentCountId = null;
+    loadStockCounts();
+    loadSchedules();
+  };
+
+  async function loadSchedules() {
+    const { data, error } = await supabaseClient
+      .from('stock_count_schedules')
+      .select(`id, recurrence, next_due_date, is_active, locations ( name )`)
+      .eq('is_active', true)
+      .order('next_due_date', { ascending: true });
+
+    const statusLine = document.getElementById('schedules-status-line');
+    const wrap = document.getElementById('schedules-table-wrap');
+
+    if (error) {
+      statusLine.textContent = '';
+      wrap.innerHTML = `<div class="error-state"><h2>Couldn't load schedules</h2><div>${error.message}</div></div>`;
+      return;
+    }
+
+    statusLine.textContent = `${data.length} active schedule${data.length === 1 ? '' : 's'}`;
+
+    if (data.length === 0) {
+      wrap.innerHTML = `<div class="empty-state"><h2>No recurring schedules</h2><div>Choose "Scheduled" with a repeat interval when adding a stock count to set one up.</div></div>`;
+      return;
+    }
+
+    const rows = data.map(s => `
+      <tr>
+        <td>${s.locations?.name || '—'}</td>
+        <td style="text-transform:capitalize;">${s.recurrence}</td>
+        <td>${fmtDate(s.next_due_date)}</td>
+        <td class="admin-only" style="display:none;"><button class="icon-btn" onclick="cancelSchedule('${s.id}')">Cancel</button></td>
+      </tr>
+    `).join('');
+
+    wrap.innerHTML = `
+      <div class="table-scroll">
+        <table class="sc-table">
+          <thead><tr><th>Location</th><th>Repeats</th><th>Next due</th><th class="admin-only" style="display:none;"></th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+
+    document.querySelectorAll('.admin-only').forEach(el => { el.style.display = isAdmin ? '' : 'none'; });
+  }
+
+  window.cancelSchedule = async function(scheduleId) {
+    if (!confirm('Cancel this recurring schedule? Past stock counts it already created will stay in the log.')) return;
+    const { error } = await supabaseClient.from('stock_count_schedules').update({ is_active: false }).eq('id', scheduleId);
+    if (error) { alert('Could not cancel: ' + error.message); return; }
+    loadSchedules();
+  };
+
+  // ---- Add stock count modal ----
+  window.openAddCountModal = async function() {
+    document.getElementById('count-form').reset();
+    document.getElementById('count-form-error').textContent = '';
+    document.getElementById('count-preview').textContent = '';
+    document.getElementById('scheduled-fields').style.display = 'none';
+    previewItemLocations = [];
+
+    const { data: locs } = await supabaseClient.from('locations').select('id, name').order('name');
+    allLocationsForCount = locs || [];
+    document.getElementById('count-location').innerHTML =
+      '<option value="">Choose a location...</option>' + allLocationsForCount.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
+
+    document.getElementById('count-modal-overlay').style.display = 'flex';
+  };
+
+  window.closeAddCountModal = function() {
+    document.getElementById('count-modal-overlay').style.display = 'none';
+  };
+
+  document.getElementById('count-type').addEventListener('change', (e) => {
+    document.getElementById('scheduled-fields').style.display = e.target.value === 'scheduled' ? 'block' : 'none';
+  });
+
+  document.getElementById('count-location').addEventListener('change', async (e) => {
+    const locationId = e.target.value;
+    const preview = document.getElementById('count-preview');
+    if (!locationId) { preview.textContent = ''; previewItemLocations = []; return; }
+
+    preview.textContent = 'Loading items assigned to this location...';
+    const { data, error } = await supabaseClient
+      .from('item_locations')
+      .select(`item_id, stock_on_hand`)
+      .eq('location_id', locationId);
+
+    if (error) {
+      preview.textContent = 'Could not check assigned items: ' + error.message;
+      previewItemLocations = [];
+      return;
+    }
+
+    previewItemLocations = data || [];
+    preview.textContent = previewItemLocations.length > 0
+      ? `${previewItemLocations.length} item${previewItemLocations.length === 1 ? '' : 's'} assigned to this location will be included.`
+      : 'No items are assigned to this location yet — assign some on the Locations page first.';
+  });
+
+  document.getElementById('count-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errorEl = document.getElementById('count-form-error');
+    errorEl.textContent = '';
+
+    const countType = document.getElementById('count-type').value;
+    const locationId = document.getElementById('count-location').value;
+    const dueDate = document.getElementById('count-due-date').value || null;
+    const recurrence = document.getElementById('count-recurrence').value || null;
+
+    if (!locationId) { errorEl.textContent = 'Please choose a location.'; return; }
+    if (countType === 'scheduled' && !dueDate) { errorEl.textContent = 'Please choose a due date for a scheduled count.'; return; }
+    if (previewItemLocations.length === 0) { errorEl.textContent = 'This location has no assigned items to count.'; return; }
+
+    try {
+      const { data: newCount, error: countErr } = await supabaseClient.from('stock_counts').insert({
+        location_id: locationId,
+        count_type: countType,
+        due_date: countType === 'scheduled' ? dueDate : null,
+        recurrence: countType === 'scheduled' ? recurrence : null,
+        status: 'pending'
+      }).select('id').single();
+      if (countErr) throw countErr;
+
+      const lineItems = previewItemLocations.map(row => ({
+        stock_count_id: newCount.id,
+        item_id: row.item_id,
+        expected_stock: row.stock_on_hand,
+        counted_stock: null
+      }));
+      const { error: itemsErr } = await supabaseClient.from('stock_count_items').insert(lineItems);
+      if (itemsErr) throw itemsErr;
+
+      // If a repeat interval was chosen, set up the recurring schedule too.
+      // This first count already covers the due date entered above, so the
+      // schedule starts counting from the *next* occurrence after it.
+      if (countType === 'scheduled' && recurrence) {
+        const { data: { user } } = await supabaseClient.auth.getUser();
+        const nextDate = new Date(dueDate);
+        if (recurrence === 'weekly') nextDate.setDate(nextDate.getDate() + 7);
+        if (recurrence === 'monthly') nextDate.setMonth(nextDate.getMonth() + 1);
+
+        await supabaseClient.from('stock_count_schedules').insert({
+          location_id: locationId,
+          recurrence,
+          next_due_date: nextDate.toISOString().slice(0, 10),
+          is_active: true,
+          created_by: user?.id || null
+        });
+      }
+
+      closeAddCountModal();
+      openCountingView(newCount.id);
+    } catch (err) {
+      errorEl.textContent = err.message || 'Something went wrong creating this stock count.';
+    }
+  });
+
+  // ---- Counting view ----
+  window.openCountingView = async function(countId) {
+    currentCountId = countId;
+    document.getElementById('log-view').style.display = 'none';
+    document.getElementById('counting-view').style.display = 'block';
+    document.getElementById('counting-error').textContent = '';
+    document.getElementById('counting-table-wrap').innerHTML = `<div class="status-line">Loading…</div>`;
+
+    const { data: count, error: countErr } = await supabaseClient
+      .from('stock_counts')
+      .select(`id, status, count_type, due_date, locations ( name )`)
+      .eq('id', countId)
+      .single();
+
+    if (countErr) {
+      document.getElementById('counting-table-wrap').innerHTML = `<div class="error-state"><h2>Couldn't load this count</h2><div>${countErr.message}</div></div>`;
+      return;
+    }
+
+    const readOnly = count.status === 'completed';
+    document.getElementById('counting-title').textContent = `${count.locations?.name || 'Location'} — ${count.count_type === 'scheduled' ? 'Scheduled' : 'One-time'} count`;
+    document.getElementById('counting-sub').textContent = readOnly
+      ? 'Completed — read only'
+      : (count.due_date ? `Due ${fmtDate(count.due_date)}` : 'One-time count');
+    document.getElementById('submit-count-btn').style.display = readOnly ? 'none' : (isAdmin ? '' : 'none');
+
+    const { data: lineItems, error: itemsErr } = await supabaseClient
+      .from('stock_count_items')
+      .select(`id, expected_stock, counted_stock, items ( id, sku, variant_name, attribute1_value, products ( name ) )`)
+      .eq('stock_count_id', countId);
+
+    if (itemsErr) {
+      document.getElementById('counting-table-wrap').innerHTML = `<div class="error-state"><h2>Couldn't load items</h2><div>${itemsErr.message}</div></div>`;
+      return;
+    }
+
+    lineItems.sort((a, b) => (a.items?.products?.name || '').localeCompare(b.items?.products?.name || ''));
+
+    const rows = lineItems.map(li => {
+      const item = li.items;
+      const productName = item?.products?.name || '';
+      const variant = item?.attribute1_value || item?.variant_name;
+      const label = variant && variant !== productName ? `${productName} — ${variant}` : productName;
+      const filled = li.counted_stock !== null && li.counted_stock !== undefined;
+
+      return `
+        <tr>
+          <td>${label || '—'}</td>
+          <td>${item?.sku || '—'}</td>
+          <td class="expected-hint">${li.expected_stock ?? '—'} (expected)</td>
+          <td>
+            <input type="number" class="count-input ${filled ? 'filled' : ''}" id="count-item-${li.id}"
+                   value="${filled ? li.counted_stock : ''}"
+                   ${readOnly ? 'disabled' : ''}
+                   onchange="saveCountDraft('${li.id}', this)">
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    document.getElementById('counting-table-wrap').innerHTML = `
+      <div class="table-scroll"><table class="sc-table">
+        <thead><tr><th>Item</th><th>SKU</th><th>Reference</th><th>Counted stock ${readOnly ? '' : '(required)'}</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    `;
+  };
+
+  window.saveCountDraft = async function(lineItemId, inputEl) {
+    const value = inputEl.value === '' ? null : Number(inputEl.value);
+    inputEl.classList.toggle('filled', value !== null);
+    const { error } = await supabaseClient.from('stock_count_items').update({ counted_stock: value }).eq('id', lineItemId);
+    if (error) alert('Could not save this count: ' + error.message);
+  };
+
+  // Guard flag: prevents the submit from running twice at once. This was the
+  // cause of duplicated Stock Adjustment logs — the save loop takes a few
+  // seconds, and every extra click of the button during that time re-ran the
+  // whole loop, logging every item again.
+  let isSubmittingCount = false;
+
+  window.submitStockCount = async function() {
+    if (isSubmittingCount) return; // already saving — ignore extra clicks
+
+    const errorEl = document.getElementById('counting-error');
+    errorEl.textContent = '';
+
+    const { data: lineItems, error: fetchErr } = await supabaseClient
+      .from('stock_count_items')
+      .select(`id, item_id, counted_stock, expected_stock`)
+      .eq('stock_count_id', currentCountId);
+
+    if (fetchErr) { errorEl.textContent = fetchErr.message; return; }
+
+    const missing = lineItems.filter(li => li.counted_stock === null || li.counted_stock === undefined);
+    if (missing.length > 0) {
+      errorEl.textContent = `Please fill in a count for every item — ${missing.length} item${missing.length === 1 ? '' : 's'} still missing.`;
+      return;
+    }
+
+    // Double safety: if this count was already completed (e.g. submitted in
+    // another tab), refuse to process it again rather than re-log everything
+    const { data: count, error: countErr } = await supabaseClient
+      .from('stock_counts').select('location_id, status').eq('id', currentCountId).single();
+    if (countErr) { errorEl.textContent = countErr.message; return; }
+    if (count.status === 'completed') {
+      errorEl.textContent = 'This count was already submitted.';
+      return;
+    }
+
+    // Lock the button and show a saving state while the loop runs
+    isSubmittingCount = true;
+    const submitBtn = document.getElementById('submit-count-btn');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Saving…';
+
+    try {
+      const { data: { user } } = await supabaseClient.auth.getUser();
+
+      for (const li of lineItems) {
+        await supabaseClient.from('item_locations')
+          .update({ stock_on_hand: li.counted_stock })
+          .eq('item_id', li.item_id).eq('location_id', count.location_id);
+
+        await supabaseClient.from('items')
+          .update({ stock_on_hand: li.counted_stock })
+          .eq('id', li.item_id);
+
+        await supabaseClient.from('stock_adjustments').insert({
+          item_id: li.item_id,
+          location_id: count.location_id,
+          previous_stock: li.expected_stock,
+          new_stock: li.counted_stock,
+          reason: 'Stock count',
+          changed_by: user?.id || null
+        });
+      }
+
+      await supabaseClient.from('stock_counts')
+        .update({ status: 'completed', completed_at: new Date().toISOString() })
+        .eq('id', currentCountId);
+
+      showLogView();
+    } catch (err) {
+      errorEl.textContent = err.message || 'Something went wrong submitting this count.';
+    } finally {
+      // Always unlock the button, whether the save worked or failed
+      isSubmittingCount = false;
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Submit stock count';
+    }
+  };
+
+  // ---- Delete a stock count ----
+  // Removes the count and (via the database's ON DELETE CASCADE) all of its
+  // line items. Stock and adjustment logs from an already-submitted count are
+  // NOT reverted — this only deletes the count record itself.
+  window.deleteStockCount = async function(countId) {
+    if (!confirm('Delete this stock count? This cannot be undone. (Stock changes it already made are kept.)')) return;
+
+    const { error } = await supabaseClient.from('stock_counts').delete().eq('id', countId);
+    if (error) { alert('Could not delete: ' + error.message); return; }
+    loadStockCounts();
+  };
+
+  initAuthGate(function() {
+    loadStockCounts();
+    loadSchedules();
+    subscribeToTable('stock_counts', () => {
+      if (!currentCountId) loadStockCounts();
+    });
+    subscribeToTable('stock_count_schedules', () => {
+      if (!currentCountId) loadSchedules();
+    });
+  });
+</script>
+
+</body>
+</html>
