@@ -7,24 +7,17 @@ let isAdmin = false;
 
 // ---- Shared helpers ----
 
-function esc(str) {
-  if (str === null || str === undefined) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
 function money(v) {
   if (v === null || v === undefined) return '—';
-  return '$' + Number(v).toFixed(2);
+  return '$' + Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function unitLabel(item, amount) {
-  const unit = item?.unit_of_measure || 'PCS';
-  return amount === null || amount === undefined ? `— ${unit}` : `${amount} ${unit}`;
+// Formats a plain count/quantity with thousands separators (1,240 not 1240).
+function fmtNum(v) {
+  if (v === null || v === undefined || v === '') return '—';
+  const n = Number(v);
+  if (Number.isNaN(n)) return String(v);
+  return n.toLocaleString();
 }
 
 function stockStatus(item) {
@@ -130,24 +123,42 @@ function initAuthGate(onAppReady) {
 
 // ---- Nav active-link highlighting + mobile collapsible menu ----
 document.addEventListener('DOMContentLoaded', () => {
+  // Set dodo-bird-only.png as the favicon on every page automatically
   let favicon = document.querySelector('link[rel="icon"]');
-  if (!favicon) { favicon = document.createElement('link'); favicon.rel = 'icon'; document.head.appendChild(favicon); }
+  if (!favicon) {
+    favicon = document.createElement('link');
+    favicon.rel = 'icon';
+    document.head.appendChild(favicon);
+  }
   favicon.type = 'image/png';
   favicon.href = 'assets/dodo-bird-only.png';
+
+  // Also cover apple-touch-icon so the home screen icon matches
+  let touchIcon = document.querySelector('link[rel="apple-touch-icon"]');
+  if (!touchIcon) {
+    touchIcon = document.createElement('link');
+    touchIcon.rel = 'apple-touch-icon';
+    document.head.appendChild(touchIcon);
+  }
+  touchIcon.href = 'assets/dodo-bird-only.png';
+
+  // Swap every nav logo to dodo-bird-only.png
   document.querySelectorAll('.nav-logo').forEach(logo => {
     logo.src = 'assets/dodo-bird-only.png';
-    logo.alt = 'Dodo Coffee bird';
+    logo.alt = 'Dodo Coffee';
   });
-  const syncLoadingState = el => el.classList.toggle('is-loading', /loading|refreshing|saving|updating/i.test(el.textContent));
-  document.querySelectorAll('.status-line').forEach(el => {
-    syncLoadingState(el);
-    new MutationObserver(() => syncLoadingState(el)).observe(el, { childList: true, characterData: true, subtree: true });
-  });
-  new MutationObserver(mutations => mutations.forEach(m => m.addedNodes.forEach(node => {
-    if (node.nodeType !== 1) return;
-    const lines = node.matches?.('.status-line') ? [node] : [...(node.querySelectorAll?.('.status-line') || [])];
-    lines.forEach(syncLoadingState);
-  }))).observe(document.body, { childList: true, subtree: true });
+
+  // Also inject the Fulfillment nav link on every page without duplicating markup
+  const navLinksForFulfillment = document.querySelector('.nav-links');
+  if (navLinksForFulfillment && !navLinksForFulfillment.querySelector('a[href="fulfillments.html"]')) {
+    const link = document.createElement('a');
+    link.href = 'fulfillments.html';
+    link.textContent = 'Fulfillment';
+    const current = location.pathname.split('/').pop() || 'index.html';
+    if (current === 'fulfillments.html') link.classList.add('active');
+    navLinksForFulfillment.appendChild(link);
+  }
+
   const current = location.pathname.split('/').pop() || 'index.html';
   document.querySelectorAll('.nav-links a').forEach(a => {
     if (a.getAttribute('href') === current) a.classList.add('active');
@@ -156,15 +167,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const nav = document.querySelector('.topnav');
   const navLinks = document.querySelector('.nav-links');
   if (!nav || !navLinks) return;
-
-  // Fulfillment is shared by every page without duplicating navigation markup.
-  if (!navLinks.querySelector('a[href="fulfillments.html"]')) {
-    const fulfillmentLink = document.createElement('a');
-    fulfillmentLink.href = 'fulfillments.html';
-    fulfillmentLink.textContent = 'Fulfillment';
-    if (current === 'fulfillments.html') fulfillmentLink.classList.add('active');
-    navLinks.appendChild(fulfillmentLink);
-  }
 
   const toggleBtn = document.createElement('button');
   toggleBtn.className = 'nav-toggle-btn';
