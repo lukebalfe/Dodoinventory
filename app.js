@@ -7,6 +7,18 @@ let isAdmin = false;
 
 // ---- Shared helpers ----
 
+// HTML-escapes user-supplied strings so they're safe to inject into innerHTML.
+// Call esc() on every piece of data that came from the database before rendering.
+function esc(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function money(v) {
   if (v === null || v === undefined) return '—';
   return '$' + Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -18,6 +30,12 @@ function fmtNum(v) {
   const n = Number(v);
   if (Number.isNaN(n)) return String(v);
   return n.toLocaleString();
+}
+
+// Displays a stock amount alongside the item's unit of measure (e.g. "12 Bags").
+function unitLabel(item, amount) {
+  const unit = item?.unit_of_measure || 'PCS';
+  return amount === null || amount === undefined ? `— ${unit}` : `${fmtNum(amount)} ${unit}`;
 }
 
 function stockStatus(item) {
