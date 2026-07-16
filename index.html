@@ -1,233 +1,148 @@
-// ============================================================
-// Supabase Edge Function: send-stock-digest
-//
-// Runs once a day (triggered by pg_cron — see the SQL file).
-// Checks for:
-//   1. Items at or below their reorder level at any location
-//   2. Pending replenishments (transfer or purchase orders waiting)
-//   3. Pending stock counts that are overdue
-//
-// Sends a single digest email via Resend if anything needs attention.
-// If everything is fine, no email is sent.
-//
-// Environment variables required (set in Supabase Dashboard →
-// Edge Functions → send-stock-digest → Secrets):
-//   RESEND_API_KEY  — your Resend API key (starts with re_)
-//   DIGEST_TO       — email address to send the digest to
-//   DIGEST_FROM     — sender address (e.g. inventory@yourdomain.com)
-//                     OR onboarding@resend.dev for testing
-// ============================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dodo Coffee Inventory — Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+<div id="login-screen" class="login-screen">
+  <form id="login-form" class="login-box">
+    <img src="assets/dodo-full-logo.png" alt="Dodo Coffee Co" class="login-logo">
+    <p class="login-sub" style="margin-top:-4px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; font-size:11px;">Inventory</p>
+    <p class="login-sub">Sign in with your team account</p>
+    <input type="email" id="login-email" placeholder="Email" required autocomplete="username">
+    <input type="password" id="login-password" placeholder="Password" required autocomplete="current-password">
+    <button type="submit">Sign in</button>
+    <div id="login-error" class="form-error"></div>
+  </form>
+</div>
 
-Deno.serve(async () => {
-  // ---- Connect to Supabase using the service role so we can read all tables
-  // (the anon key only works for authenticated sessions — the cron job doesn't
-  // have a user session, so we use the service role key instead)
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  );
+<div id="app" style="display:none;">
 
-  const resendKey  = Deno.env.get('RESEND_API_KEY');
-  const digestTo   = Deno.env.get('DIGEST_TO');
-  const digestFrom = Deno.env.get('DIGEST_FROM') || 'Dodo Coffee Inventory <onboarding@resend.dev>';
+  <nav class="topnav">
+    <div class="nav-brand"><img src="assets/dodo-bird.png" alt="" class="nav-logo"> Dodo Coffee</div>
+    <div class="nav-links">
+      <a href="index.html">Dashboard</a>
+      <a href="items.html">Items</a>
+      <a href="vendors.html">Vendors</a>
+      <a href="locations.html">Locations</a>
+      <a href="stock-counts.html">Stock Counts</a>
+      <a href="stock-adjustments.html">Stock Adjustments</a>
+      <a href="transfer-orders.html">Transfer Orders</a>
+      <a href="purchase-orders.html">Purchase Orders</a>
+    </div>
+    <button id="signout-btn" class="signout-btn">Sign out</button>
+  </nav>
 
-  if (!resendKey || !digestTo) {
-    console.error('Missing RESEND_API_KEY or DIGEST_TO environment variables');
-    return new Response('Missing env vars', { status: 500 });
-  }
+  <div class="page">
+    <div class="page-header">
+      <div>
+        <h1>Dashboard</h1>
+        <p>A quick look at your inventory</p>
+      </div>
+    </div>
 
-  // ---- 1. Items at or below their reorder level at any location ----
-  // Joins item_locations → items → products → locations so we can display
-  // a human-readable name and location for each low-stock item.
-  const { data: lowStockRows, error: lowStockErr } = await supabase
-    .from('item_locations')
-    .select(`
-      stock_on_hand,
-      reorder_level,
-      locations ( name ),
-      items (
-        sku,
-        variant_name,
-        attribute1_value,
-        products ( name )
-      )
-    `)
-    .not('reorder_level', 'is', null)
-    .gt('reorder_level', 0)
-    .filter('stock_on_hand', 'lte', 'reorder_level'); // stock ≤ reorder point
+    <div id="stat-grid" class="stat-grid"></div>
 
-  if (lowStockErr) console.error('low stock query:', lowStockErr.message);
+    <div class="dash-actions">
+      <a href="items.html" class="dash-action">
+        <div class="icon-wrap"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg></div>
+        <h3>View items</h3>
+        <p>Browse and manage all products &amp; stock</p>
+      </a>
+      <a href="vendors.html" class="dash-action">
+        <div class="icon-wrap"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+        <h3>Vendors</h3>
+        <p>See suppliers and contact info</p>
+      </a>
+      <a href="locations.html" class="dash-action">
+        <div class="icon-wrap"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 6-9 12-9 12s-9-6-9-12a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></div>
+        <h3>Locations</h3>
+        <p>Manage where stock is kept</p>
+      </a>
+      <a href="purchase-orders.html" class="dash-action">
+        <div class="icon-wrap"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>
+        <h3>Purchase orders</h3>
+        <p>Coming soon</p>
+      </a>
+    </div>
+  </div>
 
-  // ---- 2. Pending replenishments not yet turned into orders ----
-  const { data: pendingReplen, error: replenErr } = await supabase
-    .from('replenishments')
-    .select(`
-      replenishment_type,
-      current_stock,
-      replenishment_amount,
-      items ( sku, attribute1_value, variant_name, products ( name ) ),
-      destination:location_id ( name )
-    `)
-    .eq('status', 'pending')
-    .order('created_at', { ascending: true });
+</div>
 
-  if (replenErr) console.error('replenishment query:', replenErr.message);
+<script src="app.js"></script>
+<script>
+function fmtMoney(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—';
+  return '$' + Number(value).toFixed(2);
+}
 
-  // ---- 3. Overdue pending stock counts ----
-  // A count is "overdue" if it has a due_date in the past and is still pending.
-  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-  const { data: overdueCounts, error: countsErr } = await supabase
-    .from('stock_counts')
-    .select(`due_date, locations ( name )`)
-    .eq('status', 'pending')
-    .not('due_date', 'is', null)
-    .lt('due_date', today);
+async function onAppReady() {
+  const statGrid = document.getElementById('stat-grid');
+  statGrid.innerHTML = `<div class="status-line">Loading dashboard…</div>`;
 
-  if (countsErr) console.error('stock counts query:', countsErr.message);
+  try {
+    const { data: items, error: itemsError } = await supabaseClient
+      .from('items')
+      .select('id, stock_on_hand, reorder_level, purchase_price')
+      .eq('is_active', true);
 
-  // ---- If nothing needs attention, don't send anything ----
-  const lowStock = lowStockRows || [];
-  const replen   = pendingReplen || [];
-  const overdue  = overdueCounts || [];
+    if (itemsError) throw itemsError;
 
-  if (lowStock.length === 0 && replen.length === 0 && overdue.length === 0) {
-    console.log('Nothing to report — skipping digest email');
-    return new Response('Nothing to report', { status: 200 });
-  }
+    const safeItems = items || [];
 
-  // ---- Build the email HTML ----
-  // Each section only appears if there's something to show in it.
+    const inventoryValue = safeItems.reduce((sum, item) => {
+      return sum + Number(item.stock_on_hand || 0) * Number(item.purchase_price || 0);
+    }, 0);
 
-  const itemLabel = (item: any) => {
-    const base = item?.products?.name || 'Unknown item';
-    const variant = item?.attribute1_value || item?.variant_name;
-    return variant && variant !== base ? `${base} — ${variant}` : base;
-  };
+    const outCount = safeItems.filter(item => Number(item.stock_on_hand || 0) <= 0).length;
 
-  const lowStockSection = lowStock.length === 0 ? '' : `
-    <h2 style="color:#8f3229; font-size:16px; margin:24px 0 8px;">
-      ⚠️ ${lowStock.length} item${lowStock.length === 1 ? '' : 's'} at or below reorder level
-    </h2>
-    <table style="width:100%; border-collapse:collapse; font-size:13px;">
-      <thead>
-        <tr style="background:#f5f0e8; text-align:left;">
-          <th style="padding:8px 10px; border-bottom:1px solid #ddd;">Item</th>
-          <th style="padding:8px 10px; border-bottom:1px solid #ddd;">Location</th>
-          <th style="padding:8px 10px; border-bottom:1px solid #ddd; text-align:right;">Stock</th>
-          <th style="padding:8px 10px; border-bottom:1px solid #ddd; text-align:right;">Reorder level</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${lowStock.map((row: any, i: number) => `
-          <tr style="background:${i % 2 === 0 ? '#fff' : '#faf9f6'}">
-            <td style="padding:8px 10px; border-bottom:1px solid #eee;">${itemLabel(row.items)}</td>
-            <td style="padding:8px 10px; border-bottom:1px solid #eee;">${row.locations?.name || '—'}</td>
-            <td style="padding:8px 10px; border-bottom:1px solid #eee; text-align:right; color:#8f3229; font-weight:bold;">${row.stock_on_hand ?? 0}</td>
-            <td style="padding:8px 10px; border-bottom:1px solid #eee; text-align:right;">${row.reorder_level}</td>
-          </tr>
-        `).join('')}
-      </tbody>
-    </table>
-  `;
+    let pendingCounts = 0;
 
-  const replenSection = replen.length === 0 ? '' : `
-    <h2 style="color:#a8761f; font-size:16px; margin:24px 0 8px;">
-      📦 ${replen.length} pending replenishment${replen.length === 1 ? '' : 's'} waiting for orders
-    </h2>
-    <table style="width:100%; border-collapse:collapse; font-size:13px;">
-      <thead>
-        <tr style="background:#f5f0e8; text-align:left;">
-          <th style="padding:8px 10px; border-bottom:1px solid #ddd;">Item</th>
-          <th style="padding:8px 10px; border-bottom:1px solid #ddd;">To location</th>
-          <th style="padding:8px 10px; border-bottom:1px solid #ddd;">Type</th>
-          <th style="padding:8px 10px; border-bottom:1px solid #ddd; text-align:right;">Order qty</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${replen.map((row: any, i: number) => `
-          <tr style="background:${i % 2 === 0 ? '#fff' : '#faf9f6'}">
-            <td style="padding:8px 10px; border-bottom:1px solid #eee;">${itemLabel(row.items)}</td>
-            <td style="padding:8px 10px; border-bottom:1px solid #eee;">${row.destination?.name || '—'}</td>
-            <td style="padding:8px 10px; border-bottom:1px solid #eee; text-transform:capitalize;">${row.replenishment_type || '—'}</td>
-            <td style="padding:8px 10px; border-bottom:1px solid #eee; text-align:right; font-weight:bold;">${row.replenishment_amount ?? 0}</td>
-          </tr>
-        `).join('')}
-      </tbody>
-    </table>
-  `;
+    const { data: counts, error: countsError } = await supabaseClient
+      .from('stock_counts')
+      .select('id')
+      .eq('status', 'pending');
 
-  const overdueSection = overdue.length === 0 ? '' : `
-    <h2 style="color:#5c4d3d; font-size:16px; margin:24px 0 8px;">
-      📋 ${overdue.length} overdue stock count${overdue.length === 1 ? '' : 's'}
-    </h2>
-    <ul style="font-size:13px; margin:0; padding-left:20px;">
-      ${overdue.map((row: any) => `
-        <li style="margin-bottom:6px;">
-          <strong>${row.locations?.name || 'Unknown location'}</strong>
-          — was due ${row.due_date}
-        </li>
-      `).join('')}
-    </ul>
-  `;
+    if (!countsError) {
+      pendingCounts = (counts || []).length;
+    }
 
-  const dateStr = new Date().toLocaleDateString('en-US', {
-    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-  });
-
-  const html = `
-    <!DOCTYPE html>
-    <html>
-    <head><meta charset="UTF-8"></head>
-    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                 color: #1a1512; max-width: 640px; margin: 0 auto; padding: 24px;">
-
-      <div style="border-bottom: 3px solid #4b3621; padding-bottom: 14px; margin-bottom: 20px;">
-        <h1 style="font-size: 20px; margin: 0; color: #4b3621;">Dodo Coffee — Daily Inventory Digest</h1>
-        <p style="font-size: 13px; color: #8f8168; margin: 4px 0 0;">${dateStr}</p>
+    statGrid.innerHTML = `
+      <div class="stat-card good">
+        <div class="stat-value">${fmtMoney(inventoryValue)}</div>
+        <div class="stat-label">Inventory value</div>
       </div>
 
-      ${lowStockSection}
-      ${replenSection}
-      ${overdueSection}
-
-      <div style="margin-top: 32px; padding-top: 16px; border-top: 1px solid #ddd;
-                  font-size: 12px; color: #8f8168; text-align: center;">
-        Sent by Dodo Coffee Inventory &nbsp;·&nbsp;
-        <a href="https://lukebalfe.github.io/Dodoinventory/" style="color: #4b3621;">Open inventory</a>
+      <div class="stat-card danger">
+        <div class="stat-value">${outCount}</div>
+        <div class="stat-label">Out of stock</div>
       </div>
-    </body>
-    </html>
-  `;
 
-  // ---- Send via Resend ----
-  const subject = [
-    lowStock.length  > 0 && `${lowStock.length} low stock`,
-    replen.length    > 0 && `${replen.length} pending replenishment${replen.length === 1 ? '' : 's'}`,
-    overdue.length   > 0 && `${overdue.length} overdue count${overdue.length === 1 ? '' : 's'}`,
-  ].filter(Boolean).join(', ');
-
-  const res = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${resendKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      from: digestFrom,
-      to: [digestTo],
-      subject: `Dodo Inventory: ${subject}`,
-      html,
-    }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    console.error('Resend error:', body);
-    return new Response('Email send failed: ' + body, { status: 500 });
+      <div class="stat-card">
+        <div class="stat-value">${pendingCounts}</div>
+        <div class="stat-label">Pending stock counts</div>
+      </div>
+    `;
+  } catch (err) {
+    statGrid.innerHTML = `
+      <div class="error-state">
+        <h2>Dashboard error</h2>
+        <div>${err.message}</div>
+      </div>
+    `;
   }
+}
 
-  console.log(`Digest sent to ${digestTo}: ${subject}`);
-  return new Response('Digest sent', { status: 200 });
-});
+initAuthGate(onAppReady);
+</script>
+
+</body>
+</html>
+
