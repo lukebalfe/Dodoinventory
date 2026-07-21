@@ -324,6 +324,15 @@
       ? 'Dismiss this pending purchase order? Its unreceived items will remain in the audit history.'
       : 'Dismiss this completed purchase order from the running log?';
     if (!confirm(wording)) return;
+
+    if (status === 'pending') {
+      const { data: linkedItems } = await supabaseClient
+        .from('purchase_order_items')
+        .select('replenishment_id')
+        .eq('purchase_order_id', orderId);
+      await recalculateReplenishments((linkedItems || []).map(li => li.replenishment_id));
+    }
+
     const { error } = await supabaseClient.from('purchase_orders')
       .update({ dismissed_at: new Date().toISOString() }).eq('id', orderId);
     if (error) { alert('Could not dismiss purchase order: ' + error.message); return; }

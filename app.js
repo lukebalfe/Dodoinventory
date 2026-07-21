@@ -103,6 +103,70 @@ function subscribeToTable(table, callback, debounceMs = 350) {
     .subscribe();
 }
 
+// ---- Replenishments ----
+// Whenever a replenishment gets detached from an order — because the order
+// was dismissed, voided by a fresh stock count, or otherwise cancelled —
+// it needs to be re-evaluated against the item's *current* stock rather
+// than just left pointing at a cancelled order with whatever numbers were
+// true when it was created. This is shared by Purchase Orders, Transfer
+// Orders, and Stock Counts so all three release replenishments the same
+// way instead of three separate (and easily inconsistent) copies of the
+// same logic.
+//
+// If the item now has enough stock, the replenishment is deleted — it no
+// longer applies. Otherwise it's recalculated from the current numbers and
+// reset to 'pending' so it can be picked up into a new order.
+async function recalculateReplenishments(replenishmentIds) {
+  const ids = [...new Set((replenishmentIds || []).filter(Boolean))];
+  if (ids.length === 0) return;
+
+  const { data: reps } = await supabaseClient
+    .from('replenishments')
+    .select('id, item_id, location_id')
+    .in('id', ids);
+  if (!reps || reps.length === 0) return;
+
+  const locationIds = [...new Set(reps.map(r => r.location_id))];
+  const itemIds = [...new Set(reps.map(r => r.item_id))];
+  const { data: locRows } = await supabaseClient
+    .from('item_locations')
+    .select('item_id, location_id, stock_on_hand, reorder_level, max_stock, source_location_id, vendor_id')
+    .in('location_id', locationIds)
+    .in('item_id', itemIds);
+
+  const locByKey = {};
+  (locRows || []).forEach(r => { locByKey[`${r.item_id}:${r.location_id}`] = r; });
+
+  for (const rep of reps) {
+    const loc = locByKey[`${rep.item_id}:${rep.location_id}`];
+    if (!loc) continue;
+
+    const stillNeeded = loc.reorder_level !== null && loc.reorder_level !== undefined
+      && Number(loc.stock_on_hand) <= Number(loc.reorder_level);
+
+    if (!stillNeeded) {
+      await supabaseClient.from('replenishments').delete().eq('id', rep.id);
+      continue;
+    }
+
+    const amount = loc.max_stock !== null && loc.max_stock !== undefined
+      ? Math.max(Number(loc.max_stock) - Number(loc.stock_on_hand), 0)
+      : null;
+
+    await supabaseClient.from('replenishments').update({
+      current_stock: loc.stock_on_hand,
+      reorder_level: loc.reorder_level,
+      max_stock: loc.max_stock,
+      source_location_id: loc.source_location_id,
+      vendor_id: loc.vendor_id,
+      replenishment_amount: amount,
+      status: 'pending',
+      order_table: null,
+      order_id: null
+    }).eq('id', rep.id);
+  }
+}
+
 // ---- Auth gate (runs on every page) ----
 // Each page must have: #login-screen, #app, #login-form, #login-email,
 // #login-password, #login-error, #signout-btn, and a function onAppReady()

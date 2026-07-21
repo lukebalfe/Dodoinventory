@@ -318,6 +318,19 @@
       ? 'Dismiss this pending transfer order? Its items will remain in the audit history.'
       : 'Dismiss this completed transfer order from the log?';
     if (!confirm(wording)) return;
+
+    // A completed order's replenishments are already marked 'completed' —
+    // nothing to release. A pending one still has its replenishments
+    // pointing at it as "ordered", so release them back to the pool and
+    // recalculate against current stock before the order disappears.
+    if (status === 'pending') {
+      const { data: linkedItems } = await supabaseClient
+        .from('transfer_order_items')
+        .select('replenishment_id')
+        .eq('transfer_order_id', orderId);
+      await recalculateReplenishments((linkedItems || []).map(li => li.replenishment_id));
+    }
+
     const { error } = await supabaseClient.from('transfer_orders')
       .update({ dismissed_at: new Date().toISOString() }).eq('id', orderId);
     if (error) { alert('Could not dismiss transfer order: ' + error.message); return; }
