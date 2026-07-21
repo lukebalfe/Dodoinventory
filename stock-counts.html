@@ -539,11 +539,102 @@
         .update({ status: 'completed', completed_at: new Date().toISOString() })
         .eq('id', currentCountId);
 
+      await voidStaleTransfersForLocation(count.location_id, lineItems.map(li => li.item_id));
+
       showLogView();
     } catch (err) {
       errorEl.textContent = err.message || 'Something went wrong submitting this count.';
     }
   };
+
+  // A stock count overwrites stock_on_hand for every item it covers, which
+  // means any pending transfer order headed to this location was built
+  // from numbers that are now out of date — its quantities no longer
+  // reflect what's actually needed. Rather than leave a stale order
+  // sitting there, void it and recompute the replenishments behind it (and
+  // any other pending transfer-type replenishments for these items at this
+  // location) from the fresh count. Anything driven by purchase orders is
+  // left untouched — this only concerns transfers.
+  async function voidStaleTransfersForLocation(locationId, itemIds) {
+    if (!itemIds || itemIds.length === 0) return;
+
+    const { data: staleOrders, error: ordersErr } = await supabaseClient
+      .from('transfer_orders')
+      .select('id')
+      .eq('destination_location_id', locationId)
+      .eq('status', 'pending')
+      .is('dismissed_at', null);
+    if (ordersErr || !staleOrders || staleOrders.length === 0) return;
+
+    const orderIds = staleOrders.map(o => o.id);
+
+    // Replenishments that were queued into the orders we're about to void —
+    // these need to be unlinked and recalculated, not just left as "ordered"
+    // pointing at a voided order.
+    const { data: linkedItems } = await supabaseClient
+      .from('transfer_order_items')
+      .select('replenishment_id')
+      .in('transfer_order_id', orderIds);
+    const linkedReplenishmentIds = new Set((linkedItems || []).map(li => li.replenishment_id).filter(Boolean));
+
+    await supabaseClient.from('transfer_orders')
+      .update({ status: 'voided', dismissed_at: new Date().toISOString() })
+      .in('id', orderIds);
+
+    // Every transfer-type replenishment for these items at this location —
+    // whether it just got unlinked above, or was still waiting to be
+    // ordered — needs its numbers refreshed against the new count.
+    const { data: candidateReplenishments } = await supabaseClient
+      .from('replenishments')
+      .select('id, item_id, status')
+      .eq('location_id', locationId)
+      .eq('replenishment_type', 'transfer')
+      .in('item_id', itemIds)
+      .in('status', ['pending', 'ordered']);
+
+    const toRecalculate = (candidateReplenishments || []).filter(r =>
+      r.status === 'pending' || linkedReplenishmentIds.has(r.id)
+    );
+    if (toRecalculate.length === 0) return;
+
+    const { data: locRows } = await supabaseClient
+      .from('item_locations')
+      .select('item_id, stock_on_hand, reorder_level, max_stock, replenishment_type, source_location_id, vendor_id')
+      .eq('location_id', locationId)
+      .in('item_id', itemIds);
+    const locByItem = {};
+    (locRows || []).forEach(r => { locByItem[r.item_id] = r; });
+
+    for (const rep of toRecalculate) {
+      const loc = locByItem[rep.item_id];
+      if (!loc) continue;
+
+      const stillNeeded = loc.reorder_level !== null && loc.reorder_level !== undefined
+        && Number(loc.stock_on_hand) <= Number(loc.reorder_level);
+
+      if (!stillNeeded) {
+        // The new count shows enough stock on hand — this replenishment
+        // doesn't apply anymore.
+        await supabaseClient.from('replenishments').delete().eq('id', rep.id);
+        continue;
+      }
+
+      const amount = loc.max_stock !== null && loc.max_stock !== undefined
+        ? Math.max(Number(loc.max_stock) - Number(loc.stock_on_hand), 0)
+        : null;
+
+      await supabaseClient.from('replenishments').update({
+        current_stock: loc.stock_on_hand,
+        reorder_level: loc.reorder_level,
+        max_stock: loc.max_stock,
+        source_location_id: loc.source_location_id,
+        replenishment_amount: amount,
+        status: 'pending',
+        order_table: null,
+        order_id: null
+      }).eq('id', rep.id);
+    }
+  }
 
   initAuthGate(function() {
     loadStockCounts();
