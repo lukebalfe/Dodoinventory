@@ -84,11 +84,22 @@ async function getOrCreateByName(table, name) {
 // ---- Live updates ----
 // Subscribes to changes on a table and runs `callback` whenever a row
 // changes, so open pages stay in sync without needing a manual refresh.
-function subscribeToTable(table, callback) {
+//
+// Debounced: a single edit can still generate multiple postgres_changes
+// events (e.g. your own save arriving back from the server), and several
+// quick edits in a row would otherwise fire the callback once per edit.
+// Collapsing bursts into one call avoids redundant refetches and the
+// repeated-reload "flashing" that comes with them.
+function subscribeToTable(table, callback, debounceMs = 350) {
   const channelName = table + '-changes-' + Math.random().toString(36).slice(2);
+  let timer = null;
+  const debounced = (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => callback(...args), debounceMs);
+  };
   return supabaseClient
     .channel(channelName)
-    .on('postgres_changes', { event: '*', schema: 'public', table }, callback)
+    .on('postgres_changes', { event: '*', schema: 'public', table }, debounced)
     .subscribe();
 }
 

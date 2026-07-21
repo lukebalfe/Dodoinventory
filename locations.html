@@ -176,6 +176,9 @@
   let allItemsFlat = []; // { id, label } for the assign-item datalist
   let selectedLocationId = null;
 
+  // Heavy initial load: locations, counts, vendors, and the full item picker
+  // catalog. Only needed on first load, after signing in, or after a
+  // location/vendor/catalog change — not on every single stock edit.
   async function loadLocations() {
     const { data: locations, error: locErr } = await supabaseClient
       .from('locations')
@@ -190,16 +193,7 @@
       return;
     }
 
-    // Get item-location counts so cards can show "N items"
-    const { data: counts } = await supabaseClient
-      .from('item_locations')
-      .select('location_id');
-
-    const countMap = {};
-    (counts || []).forEach(row => {
-      countMap[row.location_id] = (countMap[row.location_id] || 0) + 1;
-    });
-
+    const countMap = await fetchItemCountsByLocation();
     allLocations = locations.map(l => ({ ...l, itemCount: countMap[l.id] || 0 }));
 
     const { data: vendors } = await supabaseClient.from('vendors').select('id, name').order('name');
@@ -230,12 +224,34 @@
     if (allLocations.length > 0 && !selectedLocationId) {
       selectLocation(allLocations[0].id);
     } else if (selectedLocationId) {
-      selectLocation(selectedLocationId);
+      selectLocation(selectedLocationId, { isSwitch: false });
     } else {
       renderLocationDetail(null);
     }
 
     document.querySelectorAll('.admin-only').forEach(el => { el.style.display = isAdmin ? '' : 'none'; });
+  }
+
+  async function fetchItemCountsByLocation() {
+    const { data: counts } = await supabaseClient.from('item_locations').select('location_id');
+    const countMap = {};
+    (counts || []).forEach(row => {
+      countMap[row.location_id] = (countMap[row.location_id] || 0) + 1;
+    });
+    return countMap;
+  }
+
+  // Lightweight refresh used by the realtime subscription below. Only
+  // re-counts items per location (for the "N items" badges) and refreshes
+  // whichever location is currently open — it never re-fetches the vendor
+  // list or product catalog, and it never blanks the panel, so edits from
+  // this tab (or a teammate's tab) update quietly instead of flashing the
+  // whole page back to a loading state.
+  async function refreshLocationCounts() {
+    const countMap = await fetchItemCountsByLocation();
+    allLocations.forEach(l => { l.itemCount = countMap[l.id] || 0; });
+    renderLocationList();
+    if (selectedLocationId) selectLocation(selectedLocationId, { isSwitch: false });
   }
 
   function renderLocationList() {
@@ -255,11 +271,18 @@
   let currentAssignedRaw = [];
   let currentLocationDetail = null;
 
-  window.selectLocation = async function(locationId) {
+  // `isSwitch` distinguishes the user picking a different location (show a
+  // loading placeholder, rebuild the panel) from a background refresh after
+  // an edit or a realtime update (keep the panel as-is and patch in place).
+  window.selectLocation = async function(locationId, { isSwitch = true } = {}) {
+    const switchingLocation = isSwitch || locationId !== selectedLocationId;
     selectedLocationId = locationId;
     renderLocationList();
     const location = allLocations.find(l => l.id === locationId);
-    document.getElementById('loc-detail').innerHTML = `<div class="status-line is-loading">Loading ${esc(location?.name || 'location')}…</div>`;
+
+    if (switchingLocation) {
+      document.getElementById('loc-detail').innerHTML = `<div class="status-line is-loading">Loading ${esc(location?.name || 'location')}…</div>`;
+    }
 
     const { data: assigned, error } = await supabaseClient
       .from('item_locations')
@@ -267,6 +290,7 @@
                 items ( id, sku, variant_name, attribute1_value, products ( name, categories ( name, parent_category ) ) )`)
       .eq('location_id', locationId);
 
+    const hadRowsBefore = currentAssignedRaw.length > 0;
     currentAssignedRaw = error ? [] : (assigned || []);
     currentAssignedRaw.sort((a, b) => {
       const nameA = a.items?.products?.name || '';
@@ -274,7 +298,20 @@
       return nameA.localeCompare(nameB);
     });
     currentLocationDetail = location;
-    renderLocationDetail(location, error);
+
+    // Background refresh, and the panel's overall shape (table vs. empty
+    // state vs. error) hasn't changed: patch just the table rows in place
+    // instead of tearing down and rebuilding the whole detail panel. This
+    // is what avoids the flash/flicker — the header, "Assign item" button,
+    // and category filter selection all stay untouched.
+    const canPatchInPlace = !switchingLocation && !error && hadRowsBefore
+      && currentAssignedRaw.length > 0 && document.getElementById('assigned-table-wrap');
+
+    if (canPatchInPlace) {
+      renderAssignedTable();
+    } else {
+      renderLocationDetail(location, error);
+    }
   };
 
   function assignedCategoryFilterHtml() {
@@ -468,8 +505,7 @@
     if (!confirm('Remove this item from the location?')) return;
     const { error } = await supabaseClient.from('item_locations').delete().eq('id', rowId);
     if (error) { alert('Could not remove: ' + error.message); return; }
-    selectLocation(selectedLocationId);
-    loadLocations();
+    refreshLocationCounts();
   };
 
   window.deleteLocation = async function(locationId) {
@@ -609,13 +645,12 @@
       return;
     }
     closeAssignModal();
-    selectLocation(selectedLocationId);
-    loadLocations();
+    refreshLocationCounts();
   });
 
   initAuthGate(function() {
     loadLocations();
-    subscribeToTable('item_locations', loadLocations);
+    subscribeToTable('item_locations', refreshLocationCounts);
   });
 </script>
 
