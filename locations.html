@@ -291,12 +291,27 @@
       .eq('location_id', locationId);
 
     const hadRowsBefore = currentAssignedRaw.length > 0;
-    currentAssignedRaw = error ? [] : (assigned || []);
-    currentAssignedRaw.sort((a, b) => {
+    const previousRows = currentAssignedRaw;
+    const newRows = error ? [] : (assigned || []);
+    newRows.sort((a, b) => {
       const nameA = a.items?.products?.name || '';
       const nameB = b.items?.products?.name || '';
       return nameA.localeCompare(nameB);
     });
+
+    // A background refresh (realtime callback) fires for every change to
+    // this location, including ours own edits echoing back from the
+    // server — but by then we've already patched currentAssignedRaw and
+    // the DOM in place (see updateAssignment etc). If the freshly-fetched
+    // data matches what's already on screen, re-rendering would just
+    // rebuild the whole table for no visible change, which is exactly
+    // what was still causing a flash on every edit. So skip it entirely.
+    if (!switchingLocation && !error && assignedRowsEqual(previousRows, newRows)) {
+      currentAssignedRaw = newRows; // keep object identity fresh, no re-render needed
+      return;
+    }
+
+    currentAssignedRaw = newRows;
     currentLocationDetail = location;
 
     // Background refresh, and the panel's overall shape (table vs. empty
@@ -313,6 +328,25 @@
       renderLocationDetail(location, error);
     }
   };
+
+  // Shallow-compares two assigned-item arrays field by field. Used to
+  // detect when a background refresh brought back the exact data we
+  // already have (i.e. it's just an echo of an edit we made ourselves),
+  // so we can skip a pointless re-render.
+  function assignedRowsEqual(a, b) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      const x = a[i], y = b[i];
+      if (x.id !== y.id ||
+          x.stock_on_hand !== y.stock_on_hand ||
+          x.reorder_level !== y.reorder_level ||
+          x.max_stock !== y.max_stock ||
+          x.replenishment_type !== y.replenishment_type ||
+          x.source_location_id !== y.source_location_id ||
+          x.vendor_id !== y.vendor_id) return false;
+    }
+    return true;
+  }
 
   function assignedCategoryFilterHtml() {
     const childToParent = {};
@@ -383,8 +417,8 @@
       const isOverstock = row.max_stock !== null && row.max_stock !== undefined && Number(row.stock_on_hand) > Number(row.max_stock);
 
       return `
-        <tr>
-          <td>${label}${isOverstock ? ' <span class="stamp low" style="background:var(--stock-low-bg); color:var(--stock-low);">Overstock</span>' : ''}</td>
+        <tr data-row-id="${row.id}">
+          <td class="cell-label">${label}${isOverstock ? ' <span class="stamp low" style="background:var(--stock-low-bg); color:var(--stock-low);">Overstock</span>' : ''}</td>
           <td>${item.sku || '—'}</td>
           <td><input type="number" value="${row.stock_on_hand ?? 0}" onchange="updateAssignment('${row.id}', 'stock_on_hand', this.value)" ${isAdmin ? '' : 'disabled'}></td>
           <td><input type="number" value="${row.reorder_level ?? 0}" onchange="updateAssignment('${row.id}', 'reorder_level', this.value)" ${isAdmin ? '' : 'disabled'}></td>
@@ -466,9 +500,35 @@
       setTimeout(() => { changedInput.style.borderColor = ''; }, 1500);
     }
 
-    // Re-render just the table to update any badges — scroll position stays
-    renderAssignedTable();
+    // Only the "Overstock" badge (driven by stock_on_hand vs. max_stock)
+    // ever needs to change as a result of this edit, and only that one
+    // row's label cell needs touching. Rebuilding the whole table here —
+    // as the old code did on every keystroke-triggered save, including
+    // reorder_level edits that affect nothing visible — is what was
+    // destroying and recreating every input/select in the table, which
+    // cut the green "saved" flash short and caused the flicker you're
+    // seeing. So we patch in place instead of calling renderAssignedTable().
+    if (row && (field === 'stock_on_hand' || field === 'max_stock')) {
+      updateOverstockBadge(row);
+    }
   };
+
+  // Patches a single row's label cell to add/remove the "Overstock" badge,
+  // without touching any other row, input, or select in the table.
+  function updateOverstockBadge(row) {
+    const tr = document.querySelector(`tr[data-row-id="${row.id}"]`);
+    const labelCell = tr?.querySelector('.cell-label');
+    if (!labelCell) return;
+
+    const isOverstock = row.max_stock !== null && row.max_stock !== undefined && Number(row.stock_on_hand) > Number(row.max_stock);
+    const existingBadge = labelCell.querySelector('.stamp');
+    if (isOverstock && !existingBadge) {
+      labelCell.insertAdjacentHTML('beforeend', ' <span class="stamp low" style="background:var(--stock-low-bg); color:var(--stock-low);">Overstock</span>');
+    } else if (!isOverstock && existingBadge) {
+      existingBadge.previousSibling?.remove(); // the space text node before the badge
+      existingBadge.remove();
+    }
+  }
 
   window.updateReplenishmentType = async function(rowId, type) {
     // Clear the old source/vendor when switching type — a transfer needs

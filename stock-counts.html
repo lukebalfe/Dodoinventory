@@ -171,7 +171,8 @@
   async function loadStockCounts() {
     const { data, error } = await supabaseClient
       .from('stock_counts')
-      .select(`id, count_type, due_date, recurrence, status, created_at, completed_at, locations ( name )`)
+      .select(`id, count_type, due_date, recurrence, status, created_at, completed_at, dismissed_at, locations ( name )`)
+      .is('dismissed_at', null)
       .order('created_at', { ascending: false });
 
     const statusLine = document.getElementById('log-status-line');
@@ -179,7 +180,9 @@
 
     if (error) {
       statusLine.textContent = '';
-      wrap.innerHTML = `<div class="error-state"><h2>Couldn't load stock counts</h2><div>${error.message}</div></div>`;
+      wrap.innerHTML = error.message.includes('dismissed_at')
+        ? `<div class="field-help">Run the dismissed_at migration (see supabase-website-fixes.sql) to enable dismissing stock counts, then reload this page.</div>`
+        : `<div class="error-state"><h2>Couldn't load stock counts</h2><div>${error.message}</div></div>`;
       return;
     }
 
@@ -198,7 +201,10 @@
         <td><span class="status-pill ${row.status}">${row.status}</span></td>
         <td>${fmtDateTime(row.created_at)}</td>
         <td>${row.completed_at ? fmtDateTime(row.completed_at) : '—'}</td>
-        <td><button class="btn-secondary" onclick="openCountingView('${row.id}')">${row.status === 'pending' ? 'Continue' : 'View'}</button></td>
+        <td>
+          <button class="btn-secondary" onclick="openCountingView('${row.id}')">${row.status === 'pending' ? 'Continue' : 'View'}</button>
+          <button class="btn-danger admin-only" style="display:${isAdmin ? '' : 'none'};" onclick="dismissStockCount('${row.id}', '${row.status}')">Dismiss</button>
+        </td>
       </tr>
     `).join('');
 
@@ -218,6 +224,17 @@
     currentCountId = null;
     loadStockCounts();
     loadSchedules();
+  };
+
+  window.dismissStockCount = async function(countId, status) {
+    const wording = status === 'pending'
+      ? 'Dismiss this pending stock count? It will be removed from the list without being completed.'
+      : 'Dismiss this completed stock count from the log?';
+    if (!confirm(wording)) return;
+    const { error } = await supabaseClient.from('stock_counts')
+      .update({ dismissed_at: new Date().toISOString() }).eq('id', countId);
+    if (error) { alert('Could not dismiss stock count: ' + error.message); return; }
+    loadStockCounts();
   };
 
   async function loadSchedules() {

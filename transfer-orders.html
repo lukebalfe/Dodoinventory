@@ -266,7 +266,8 @@
   async function loadTransferOrders() {
     const { data, error } = await supabaseClient
       .from('transfer_orders')
-      .select(`id, status, created_at, completed_at, locations ( name )`)
+      .select(`id, status, created_at, completed_at, dismissed_at, locations ( name )`)
+      .is('dismissed_at', null)
       .order('created_at', { ascending: false });
 
     const statusLine = document.getElementById('orders-status-line');
@@ -274,7 +275,9 @@
 
     if (error) {
       statusLine.textContent = '';
-      wrap.innerHTML = `<div class="error-state"><h2>Couldn't load transfer orders</h2><div>${error.message}</div></div>`;
+      wrap.innerHTML = error.message.includes('dismissed_at')
+        ? `<div class="field-help">Run the dismissed_at migration (see supabase-website-fixes.sql) to enable dismissing transfer orders, then reload this page.</div>`
+        : `<div class="error-state"><h2>Couldn't load transfer orders</h2><div>${error.message}</div></div>`;
       return;
     }
 
@@ -294,6 +297,7 @@
         <td>
           <button class="btn-secondary" onclick="printTransferOrder('${o.id}')">Print / Save PDF</button>
           ${o.status === 'pending' ? `<button class="btn-primary admin-only" style="display:${isAdmin ? '' : 'none'};" onclick="completeTransferOrder('${o.id}')">Mark completed</button>` : ''}
+          <button class="btn-danger admin-only" style="display:${isAdmin ? '' : 'none'};" onclick="dismissTransferOrder('${o.id}', '${o.status}')">Dismiss</button>
         </td>
       </tr>
     `).join('');
@@ -307,6 +311,17 @@
 
     document.querySelectorAll('.admin-only').forEach(el => { el.style.display = isAdmin ? '' : 'none'; });
   }
+
+  window.dismissTransferOrder = async function(orderId, status) {
+    const wording = status === 'pending'
+      ? 'Dismiss this pending transfer order? Its items will remain in the audit history.'
+      : 'Dismiss this completed transfer order from the log?';
+    if (!confirm(wording)) return;
+    const { error } = await supabaseClient.from('transfer_orders')
+      .update({ dismissed_at: new Date().toISOString() }).eq('id', orderId);
+    if (error) { alert('Could not dismiss transfer order: ' + error.message); return; }
+    loadTransferOrders();
+  };
 
   window.printTransferOrder = async function(orderId) {
     const { data: order } = await supabaseClient.from('transfer_orders').select(`id, created_at, locations ( name )`).eq('id', orderId).single();
